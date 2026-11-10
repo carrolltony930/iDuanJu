@@ -64,7 +64,7 @@ fun LibraryListScreen(kind: String, onBack: () -> Unit, onOpenDetail: (String) -
                             Text(p.title, color = c.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             val s = p.seconds.toInt()
                             Text("${p.resumeLabel} · ${s / 60}:${"%02d".format(s % 60)}", color = c.secondary, fontSize = 12.sp)
-                            LinearProgressIndicator(progress = { p.fraction }, Modifier.fillMaxWidth().height(3.dp), color = c.accent, trackColor = c.text.copy(0.12f))
+                            LinearProgressIndicator(progress = { p.fraction }, Modifier.fillMaxWidth().height(3.dp), color = c.accent, trackColor = c.text.copy(0.12f), gapSize = 0.dp, drawStopIndicator = {})
                         }
                         Text("✕", color = c.secondary, fontSize = 16.sp, modifier = Modifier.clickable { lib.removeProgress(p.seriesId) }.padding(8.dp))
                     }
