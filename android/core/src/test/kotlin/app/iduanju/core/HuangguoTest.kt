@@ -59,6 +59,11 @@ class HuangguoTest {
         assertArrayEquals(x, CoverCrypto.decrypt(CoverCrypto.decrypt(x, CoverCrypto.Kind.legacyXOR), CoverCrypto.Kind.legacyXOR))
     }
 
+    private fun get(u: String, h: Map<String, String>): ByteArray {
+        val b = okhttp3.Request.Builder().url(u); h.forEach { (k, v) -> b.header(k, v) }
+        return okhttp3.OkHttpClient().newCall(b.build()).execute().use { r -> if (!r.isSuccessful) error("HTTP ${r.code}"); r.body!!.bytes() }
+    }
+
     /** Live: counts only (adult source — titles are not printed). */
     @Test fun live() {
         assumeTrue(System.getProperty("idj.live") == "1")
@@ -75,7 +80,9 @@ class HuangguoTest {
         a.getOrNull()?.items?.firstOrNull()?.let { s ->
             val d = runCatching { c.detail(s.seriesId, s.title, s.cover) }
             println("hg ai detail eps=" + d.map { it.episodes.size }.getOrElse { "ERR " + it.message })
-            d.getOrNull()?.episodes?.firstOrNull()?.let { e -> println("hg ai resolve=" + runCatching { c.resolve(e).streams.first().let { it.kind.name + " hdr=" + it.headers.keys } }.getOrElse { "ERR " + it.message }) }
+            d.getOrNull()?.episodes?.firstOrNull()?.let { e -> println("hg ai resolve=" + runCatching { c.resolve(e).streams.first().let { it.kind.name + " hdr=" + it.headers.keys + " manifest=" + get(it.url, it.headers).let { b -> String(b).lineSequence().first() + " (" + b.size + " B)" } } }.getOrElse { "ERR " + it.message }) }
+            // cover: fetch + decrypt + decode header (dimensions only)
+            println("hg ai cover kind=${CoverCrypto.kind(s.cover)} " + runCatching { val b = CoverCrypto.decrypt(get(s.cover, mapOf("User-Agent" to HuangguoClient.UA)), CoverCrypto.kind(s.cover)); val img = javax.imageio.ImageIO.read(b.inputStream()); "magic=%02x%02x".format(b[0], b[1]) + (img?.let { " ${it.width}x${it.height}" } ?: "") }.getOrElse { "ERR " + it.message })
         }
         val l = runCatching { c.legacyChannels() }
         println("hg legacy tabs=" + l.map { it.size }.getOrElse { "ERR " + it.message })

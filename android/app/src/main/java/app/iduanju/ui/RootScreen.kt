@@ -37,7 +37,7 @@ fun RootScreen(initialRoute: String? = null) {
 
     Box(Modifier.fillMaxSize()) {
         NavHost(nav, startDestination = "home", modifier = Modifier.fillMaxSize()) {
-            composable("home") { HomeScreen(onOpenDetail = { nav.navigate("detail/$it") }, onSearch = { nav.navigate("search") }, onPlay = { nav.navigate("player/$it/0") }) }
+            composable("home") { HomeScreen(onOpenDetail = { nav.navigate("detail/$it") }, onSearch = { nav.navigate("search") }, onPlay = { nav.navigate("player/$it/0") }, onOpenManga = { nav.navigate("manga/" + android.net.Uri.encode(it)) }) }
             composable("search") { SearchScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
             composable("category") { CategoryScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
             composable("profile") { ProfileScreen() }
@@ -50,6 +50,10 @@ fun RootScreen(initialRoute: String? = null) {
                     onOpenSeries = { nav.navigate("detail/$it") },
                 )
             }
+            composable("manga/{id}") { e -> app.iduanju.manga.MangaDetailScreen(e.arguments!!.getString("id")!!, onBack = { nav.popBackStack() },
+                onRead = { id, i, p -> nav.navigate("mangaRead/" + android.net.Uri.encode(id) + "/$i/$p") }) }
+            composable("mangaRead/{id}/{i}/{p}", arguments = listOf(navArgument("i") { type = NavType.IntType }, navArgument("p") { type = NavType.IntType })) { e ->
+                app.iduanju.manga.MangaReaderScreen(e.arguments!!.getString("id")!!, e.arguments!!.getInt("i"), e.arguments!!.getInt("p"), onBack = { nav.popBackStack() }) }
             composable(
                 "player/{sid}/{ep}",
                 arguments = listOf(

@@ -18,6 +18,8 @@ class IdjApp : Application(), coil.ImageLoaderFactory {
         private set
     lateinit var tg: app.iduanju.tg.TGStore
         private set
+    lateinit var manga: app.iduanju.manga.MangaStore
+        private set
     lateinit var huangguo: app.iduanju.core.huangguo.HuangguoClient
         private set
 
@@ -40,6 +42,7 @@ class IdjApp : Application(), coil.ImageLoaderFactory {
         cms = app.iduanju.data.CMSStore(this)
         plugins = app.iduanju.plugin.PluginStore(this)
         tg = app.iduanju.tg.TGStore(this)
+        manga = app.iduanju.manga.MangaStore(this)
         huangguo = app.iduanju.core.huangguo.HuangguoClient(filesDir, app.iduanju.huangguo.PrefsMap(this))
         app.iduanju.core.hls.HLSAdFilter.enabled = settings.adStripEnabled
     }
