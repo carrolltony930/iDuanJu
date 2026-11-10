@@ -70,7 +70,7 @@
 - 0503f87 / f601a60 PROGRESS
 - 750c2b7 黄果 AI 站移至「AI剧」页（红果 AI剧 / 黄果 AI 站 chips，成人开关后显示），频道面板同步；模拟器：两 chip 均在、AI 站加载 36 个文本节点（不截图）
 - e29bd7a 「我的」按成人开关隐藏成人插件 / 采集站
-- （本次）解码判定与 ExoPlayer 一致 + PROGRESS 07:15
+- e475118 解码判定与 ExoPlayer 一致 + PROGRESS 07:15
 
 ## APK（/workspace/iduanju-android/dist，SHA256 见 dist/SHA256SUMS）
 - 见文末「APK」节（每次构建后更新）
@@ -131,10 +131,10 @@
 - 插件执行超时中断、签名校验
 
 ## APK
-构建于 7b6e2a2（2026-11-11 06:26；release 用 Android Debug 证书签名；未混淆）
+构建于 e475118（2026-11-11 07:12；与 07:00 模拟器复核所装的包字节相同；release 用 Android Debug 证书签名；未混淆）
 ```
 iDuanJu-1.5.2-android-debug.apk 28633335
 iDuanJu-1.5.2-android-release.apk 20654239
-bdf0012d40d6fe2a37451996925e14dbd9a36973df18704bc525aaca006283df  iDuanJu-1.5.2-android-debug.apk
-9eefe9ace14117e473e993678dea20a7f58ae31c52d09c54b71a30dd623fc027  iDuanJu-1.5.2-android-release.apk
+ff481c0ab79147a34ede269286822c1e79890c7c80698ff28178154c2181c607  iDuanJu-1.5.2-android-debug.apk
+4e6272afc868a36c6fdb2eb0c0c402041c52865697eb59010d865f2bc0d9519f  iDuanJu-1.5.2-android-release.apk
 ```
