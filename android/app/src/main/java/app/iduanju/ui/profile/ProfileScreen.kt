@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.layout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -87,7 +88,11 @@ private fun ProfileTop(onOpenDetail: (String) -> Unit) {
     var confirmAdult by remember { mutableStateOf(false) }
     var adStrip by remember { mutableStateOf(app.iduanju.core.hls.HLSAdFilter.enabled) }
     Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        if (lib.history.isNotEmpty()) Box(Modifier.offset(x = (-16).dp).fillMaxWidth()) { app.iduanju.ui.home.ContinueRow(lib.history.toList(), onOpenDetail) }
+        if (lib.history.isNotEmpty()) Box(Modifier.layout { m, cons ->
+            // bleed to the screen edges like iOS (the row has its own 16dp inset; this column has 20dp)
+            val extra = 40.dp.roundToPx(); val p = m.measure(cons.copy(minWidth = 0, maxWidth = cons.maxWidth + extra))
+            layout(cons.maxWidth, p.height) { p.place(-16.dp.roundToPx(), 0) }
+        }) { app.iduanju.ui.home.ContinueRow(lib.history.toList(), onOpenDetail) }
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("我的收藏", color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
