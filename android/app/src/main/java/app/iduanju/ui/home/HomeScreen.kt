@@ -22,7 +22,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
+import androidx.compose.material3.*
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -169,7 +169,13 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}, onPlay
                     }
                 }
                 Spacer(Modifier.height(2.dp))
-                ChannelBar(labels, pager.currentPage, ink) { scope.launch { pager.animateScrollToPage(it) } }
+                var sheet by remember { mutableStateOf(false) }
+                ChannelBar(labels, pager.currentPage, ink, onMore = { sheet = true }) { scope.launch { pager.animateScrollToPage(it) } }
+                if (sheet) ChannelSheet(pages, labels, pager.currentPage, onDismiss = { sheet = false }) { page, sub ->
+                    sheet = false
+                    if (sub != null) HomeSubSel.map[labels[page]] = sub
+                    scope.launch { pager.animateScrollToPage(page) }
+                }
             }
             HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 0) { page ->
                 val any = pages[page]
@@ -191,9 +197,56 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}, onPlay
     }
 }
 
+/** Sub-tab chosen from the 频道 sheet, per home page label. */
+object HomeSubSel { val map = androidx.compose.runtime.mutableStateMapOf<String, Int>() }
+
+/** iOS HomeChannelSheet: 「频道」 title + 完成, one section per page with its sub-channels as a 3-column grid of chips. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChannelSheet(pages: List<Any>, labels: List<String>, current: Int, onDismiss: () -> Unit, onPick: (Int, Int?) -> Unit) {
+    val c = IdjThemeColors
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismiss, sheetState = state, containerColor = c.surface, dragHandle = { BottomSheetDefaults.DragHandle(color = c.text.copy(0.25f)) }) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            Text("频道", color = c.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.Center))
+            Box(Modifier.align(Alignment.CenterEnd).clip(RoundedCornerShape(50)).background(c.text.copy(0.1f)).clickable(onClick = onDismiss).padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text("完成", color = c.accent, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            pages.forEachIndexed { pi, p ->
+                val subs: List<String> = when (p) {
+                    is HomeSource -> when (p) {
+                        HomeSource.huangguo -> listOf("视频站", "AI 站", "App 源")
+                        HomeSource.channels, HomeSource.manga -> emptyList()
+                        else -> p.subs().map { it.subLabel }
+                    }
+                    else -> listOf(labels[pi])
+                }
+                if (subs.isEmpty()) return@forEachIndexed
+                Text(labels[pi], color = c.secondary, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
+                subs.chunked(3).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        row.forEachIndexed { j, t ->
+                            val si = subs.indexOf(t)
+                            val on = pi == current && (HomeSubSel.map[labels[pi]] ?: 0) == si
+                            Box(Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(10.dp)).background(if (on) c.accent.copy(0.16f) else c.text.copy(0.07f))
+                                .clickable { onPick(pi, if (p is HomeSource && p != HomeSource.huangguo) si else null) }, contentAlignment = Alignment.Center) {
+                                Text(t, color = if (on) c.accent else c.text, fontSize = 15.sp, maxLines = 1)
+                            }
+                        }
+                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
 /** iOS HomeChannelBar: unselected 17 secondary, selected 20 bold + 18x3 accent capsule; selected auto-centred. */
 @Composable
-private fun ChannelBar(items: List<String>, selected: Int, ink: Color, onSelect: (Int) -> Unit) {
+private fun ChannelBar(items: List<String>, selected: Int, ink: Color, onMore: () -> Unit = {}, onSelect: (Int) -> Unit) {
     val c = IdjThemeColors
     val state = rememberLazyListState()
     LaunchedEffect(selected) {
@@ -215,7 +268,7 @@ private fun ChannelBar(items: List<String>, selected: Int, ink: Color, onSelect:
             }
             item { Spacer(Modifier.width(12.dp)) }
         }
-        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(44.dp).clickable(onClick = onMore), contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.KeyboardArrowDown, "展开全部频道", tint = ink.copy(0.85f))
         }
     }
@@ -226,7 +279,8 @@ private fun ChannelBar(items: List<String>, selected: Int, ink: Color, onSelect:
 private fun FeedPage(source: HomeSource, onOpen: (String) -> Unit, onHero: (String?) -> Unit) {
     val c = IdjThemeColors
     val subs = source.subs()
-    var tab by remember { mutableStateOf(subs.first()) }
+    var tab by remember { mutableStateOf(subs.getOrElse(HomeSubSel.map[source.label] ?: 0) { subs.first() }) }
+    LaunchedEffect(HomeSubSel.map[source.label]) { HomeSubSel.map[source.label]?.let { i -> subs.getOrNull(i)?.let { tab = it } } }
     val boards = (tab as? HomeTab.Hongguo)?.g?.let { g -> g.subs.map { BoardSpec(g, it) } } ?: emptyList()
     val heroPicks = boards.firstOrNull()?.let { BoardCache.items[it.id] }?.take(5) ?: emptyList()
     var heroIndex by remember(tab) { mutableIntStateOf(0) }
