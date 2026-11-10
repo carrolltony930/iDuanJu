@@ -1,5 +1,7 @@
 package app.iduanju.tg
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import android.content.Context
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -57,5 +59,21 @@ class TGStore(ctx: Context) {
         }.awaitAll()
     }
 
-    companion object { const val KEY = "stv.tg.channels" }
+    // MARK: blocklist (iOS TGFilter / TGRule)
+    val rules = mutableStateListOf<TGRule>().also { l -> runCatching { val a = JSONArray(sp.getString(RULES, "[]")); for (i in 0 until a.length()) l.add(TGRule.fromJSON(a.getJSONObject(i))) } }
+    var mode by androidx.compose.runtime.mutableStateOf(runCatching { TGFilterMode.valueOf(sp.getString(MODE, "fold")!!) }.getOrDefault(TGFilterMode.fold))
+        private set
+    var heuristics by androidx.compose.runtime.mutableStateOf(sp.getBoolean(HEUR, true))
+        private set
+    private fun saveRules() = sp.edit().putString(RULES, JSONArray(rules.map { it.toJSON() }).toString()).putString(MODE, mode.name).putBoolean(HEUR, heuristics).apply()
+    fun addRule(r: TGRule) { if (r.pattern.isBlank() || rules.any { it.kind == r.kind && it.pattern.equals(r.pattern, true) && it.channel == r.channel }) return; rules.add(r); saveRules() }
+    fun removeRule(id: String) { rules.removeAll { it.id == id }; saveRules() }
+    fun toggleRule(id: String) { val i = rules.indexOfFirst { it.id == id }; if (i >= 0) { rules[i] = rules[i].copy(enabled = !rules[i].enabled); saveRules() } }
+    fun chooseMode(m: TGFilterMode) { mode = m; saveRules() }
+    fun enableHeuristics(on: Boolean) { heuristics = on; saveRules() }
+    fun import(text: String): Int { val b = TGFilter.importRules(text) ?: return 0; val n = rules.size; b.rules.forEach(::addRule); mode = b.mode; heuristics = b.heuristics; saveRules(); return rules.size - n }
+    fun export(): String = TGFilter.export(TGFilter.Bundle(mode, heuristics, rules.toList()))
+    fun verdict(p: TGPost): TGVerdict = TGFilter.verdict(p, rules, heuristics)
+
+    companion object { const val KEY = "stv.tg.channels"; const val RULES = "stv.tg.rules"; const val MODE = "stv.tg.filterMode"; const val HEUR = "stv.tg.heuristics" }
 }
