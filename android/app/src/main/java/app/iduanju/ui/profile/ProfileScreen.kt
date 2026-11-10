@@ -1,6 +1,7 @@
 package app.iduanju.ui.profile
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,7 +28,7 @@ import app.iduanju.core.hongguo.HGPlayerDevice
 import app.iduanju.ui.theme.IdjThemeColors
 
 @Composable
-fun ProfileScreen() {
+fun ProfileScreen(onOpenDetail: (String) -> Unit = {}) {
     val c = IdjThemeColors
     val settings = IdjApp.instance.settings
     var did by remember { mutableStateOf(settings.playerDeviceOverride()?.first ?: "") }
@@ -40,6 +41,8 @@ fun ProfileScreen() {
     ) {
         Text("我的", color = c.text, fontWeight = FontWeight.Bold, fontSize = 28.sp)
         Spacer(Modifier.height(20.dp))
+        ProfileTop(onOpenDetail)
+        Spacer(Modifier.height(24.dp))
         Text("红果播放设备", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
         Spacer(Modifier.height(6.dp))
         Text(
@@ -72,6 +75,97 @@ fun ProfileScreen() {
 }
 
 /** iOS SourcesView 「苹果 CMS 采集站」: add by API URL (validated by ?ac=list), toggle, remove. */
+/** iOS ProfileView top: 继续观看, 我的收藏 grid, 片源管理 (adult gate with an age confirmation, 去广告), maintenance rows, footer. */
+@Composable
+private fun ProfileTop(onOpenDetail: (String) -> Unit) {
+    val c = IdjThemeColors
+    val ia = IdjApp.instance
+    val lib = ia.library
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var message by remember { mutableStateOf<String?>(null) }
+    var confirmAdult by remember { mutableStateOf(false) }
+    var adStrip by remember { mutableStateOf(app.iduanju.core.hls.HLSAdFilter.enabled) }
+    Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        if (lib.history.isNotEmpty()) Box(Modifier.offset(x = (-16).dp).fillMaxWidth()) { app.iduanju.ui.home.ContinueRow(lib.history.toList(), onOpenDetail) }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("我的收藏", color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("全部 ${lib.favorites.size}", color = c.secondary, fontSize = 15.sp)
+            }
+            val favs = lib.favorites.entries.sortedByDescending { it.value.third }.take(6)
+            if (favs.isEmpty()) Text("在播放页右侧点 ♥ 收藏", color = c.secondary, fontSize = 14.sp)
+            else favs.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEach { (sid, v) ->
+                        Column(Modifier.weight(1f).clickable { onOpenDetail(sid) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Box(Modifier.fillMaxWidth().aspectRatio(0.75f).clip(RoundedCornerShape(10.dp)).background(c.elevated)) {
+                                coil.compose.AsyncImage(v.second, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                            }
+                            Text(v.first, color = c.text, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        }
+                    }
+                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+        Card {
+            Text("片源管理", color = c.secondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 14.dp, top = 12.dp))
+            ToggleRow("成人片源（默认隐藏）", "黄果、标记为成人的采集站 / 插件 / Telegram 频道 / 漫画插件；所有结果一律过滤未成年人与非自愿题材", ia.cms.adultUnlocked) {
+                if (it) confirmAdult = true else { ia.cms.adultUnlocked = false; message = "已隐藏成人片源" }
+            }
+            ToggleRow("去广告", "去掉 HLS 片源里插播的广告片段（adjump、异域名短片段、重复片段）", adStrip) {
+                adStrip = it; app.iduanju.core.hls.HLSAdFilter.enabled = it
+                ctx.getSharedPreferences("idj", android.content.Context.MODE_PRIVATE).edit().putBoolean("stv.hls.adstrip", it).apply()
+            }
+        }
+        Card {
+            ActionRow("重置红果设备注册") { withContext(Dispatchers.IO) { ia.hongguo.resetDevice() }; "已重置红果设备" }.invoke(scope) { message = it }
+            ActionRow("重置黄果访客会话") { withContext(Dispatchers.IO) { ia.huangguo.resetSession() }; "已清除黄果会话" }.invoke(scope) { message = it }
+            ActionRow("清空封面缓存") { coil.Coil.imageLoader(ctx).let { l -> l.memoryCache?.clear(); withContext(Dispatchers.IO) { l.diskCache?.clear() } }; "封面缓存已清空" }.invoke(scope) { message = it }
+            ActionRow("清空播放缓存") { withContext(Dispatchers.IO) { java.io.File(ctx.cacheDir, "hg-play").deleteRecursively() }; "播放缓存已清空" }.invoke(scope) { message = it }
+        }
+        val ver = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "" }
+        Text(message ?: "所有数据由本机直连上游，观看记录和收藏只保存在本机。\ni短剧 $ver", color = if (message != null) c.accent else c.secondary, fontSize = 12.sp, lineHeight = 18.sp)
+    }
+    if (confirmAdult) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { confirmAdult = false },
+        title = { Text("显示成人片源？") },
+        text = { Text("仅限年满 18 周岁的用户。开启后黄果与标记为成人的片源会出现在首页、搜索、频道与漫画；可随时在这里关闭。") },
+        confirmButton = { TextButton({ ia.cms.adultUnlocked = true; confirmAdult = false; message = "已显示成人片源" }) { Text("我已年满 18 周岁") } },
+        dismissButton = { TextButton({ confirmAdult = false }) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun Card(content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(IdjThemeColors.surface), content = content)
+}
+
+@Composable
+private fun ToggleRow(title: String, sub: String, on: Boolean, onChange: (Boolean) -> Unit) {
+    val c = IdjThemeColors
+    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = c.text, fontSize = 15.sp)
+            Text(sub, color = c.secondary, fontSize = 11.sp, lineHeight = 15.sp)
+        }
+        Spacer(Modifier.width(10.dp))
+        Switch(on, onChange)
+    }
+}
+
+private class ActionRow(val title: String, val work: suspend () -> String) {
+    @Composable
+    fun invoke(scope: kotlinx.coroutines.CoroutineScope, onDone: (String) -> Unit) {
+        val c = IdjThemeColors
+        Row(Modifier.fillMaxWidth().clickable { scope.launch { onDone(runCatching { work() }.getOrElse { it.message ?: "失败" }) } }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = c.text, fontSize = 15.sp, modifier = Modifier.weight(1f))
+            Text("›", color = c.secondary, fontSize = 18.sp)
+        }
+    }
+}
+
 @Composable
 private fun CMSSection() {
     val c = IdjThemeColors

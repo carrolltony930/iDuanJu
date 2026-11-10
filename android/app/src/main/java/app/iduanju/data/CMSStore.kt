@@ -20,9 +20,11 @@ class CMSStore(ctx: Context) {
 
     fun site(key: String): CMSSite? = sites.firstOrNull { it.key == key }
     val visibleSites: List<CMSSite> get() = sites.filter { it.enabled && (!it.adult || adultUnlocked) }
+    private val adultState = androidx.compose.runtime.mutableStateOf(sp.getBoolean("gate.adult", false))
+    /** Compose state so home / search / 频道 / 漫画 re-filter as soon as the gate changes in 我的. */
     var adultUnlocked: Boolean
-        get() = sp.getBoolean("gate.adult", false)
-        set(v) { sp.edit().putBoolean("gate.adult", v).apply() }
+        get() = adultState.value
+        set(v) { adultState.value = v; sp.edit().putBoolean("gate.adult", v).apply() }
 
     /** Validates by fetching the class list (blocking; call off the main thread), then saves. */
     fun add(name: String, apiRaw: String, adult: Boolean, origin: String = "manual"): CMSSite {

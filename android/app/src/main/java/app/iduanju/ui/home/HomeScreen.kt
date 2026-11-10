@@ -490,7 +490,7 @@ fun PosterCard(s: HGSeries, onOpen: (String) -> Unit) = HomePosterCard(s, onOpen
 
 /** iOS ContinueRow: 112x150 covers, 「看到第N集」 + accent progress capsule. */
 @Composable
-private fun ContinueRow(items: List<app.iduanju.data.WatchProgress>, onOpen: (String) -> Unit) {
+internal fun ContinueRow(items: List<app.iduanju.data.WatchProgress>, onOpen: (String) -> Unit) {
     val c = IdjThemeColors
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {

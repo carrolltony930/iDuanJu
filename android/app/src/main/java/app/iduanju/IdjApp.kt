@@ -39,6 +39,7 @@ class IdjApp : Application(), coil.ImageLoaderFactory {
             settings.playerDeviceOverride()?.let { it }
         }
         hongguo = HongguoClient(filesDir)
+        app.iduanju.core.hls.HLSAdFilter.enabled = getSharedPreferences("idj", MODE_PRIVATE).getBoolean("stv.hls.adstrip", true)
         library = LibraryStore(this)
         cms = app.iduanju.data.CMSStore(this)
         plugins = app.iduanju.plugin.PluginStore(this)

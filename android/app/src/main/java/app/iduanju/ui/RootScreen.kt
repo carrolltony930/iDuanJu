@@ -40,7 +40,7 @@ fun RootScreen(initialRoute: String? = null) {
             composable("home") { HomeScreen(onOpenDetail = { nav.navigate("detail/$it") }, onSearch = { nav.navigate("search") }, onPlay = { nav.navigate("player/$it/0") }, onOpenManga = { nav.navigate("manga/" + android.net.Uri.encode(it)) }) }
             composable("search") { SearchScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
             composable("category") { CategoryScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
-            composable("profile") { ProfileScreen() }
+            composable("profile") { ProfileScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
             composable("detail/{sid}", arguments = listOf(navArgument("sid") { type = NavType.StringType })) { e ->
                 val sid = e.arguments!!.getString("sid")!!
                 DetailScreen(
