@@ -185,7 +185,24 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}, onPlay
                 if (s == HomeSource.huangguo) { app.iduanju.huangguo.HuangguoFeedPage(onOpenDetail); return@HorizontalPager }
                 if (s == HomeSource.manga) { app.iduanju.manga.MangaHomePage(onOpenManga); return@HorizontalPager }
                 if (s == HomeSource.channels) { app.iduanju.tg.ChannelFeedPage(onPlay); return@HorizontalPager }
-                if (s.subs().isEmpty()) {
+                if (s == HomeSource.ai && app.iduanju.IdjApp.instance.cms.adultUnlocked) {
+                    // iOS AI剧: 红果 AI剧 | 黄果 AI 站 (the latter only behind the adult gate)
+                    val sel = HomeSubSel.map[s.label] ?: 0
+                    Column(Modifier.fillMaxSize()) {
+                        Row(Modifier.padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("红果 AI剧", "黄果 AI 站").forEachIndexed { i, t ->
+                                val on = i == sel
+                                Box(Modifier.height(30.dp).clip(RoundedCornerShape(50)).background(if (on) c.text else c.text.copy(0.1f)).clickable { HomeSubSel.map[s.label] = i }.padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                                    Text(t, color = if (on) c.bg else c.text.copy(0.8f), fontSize = 13.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
+                                }
+                            }
+                        }
+                        Box(Modifier.weight(1f)) {
+                            if (sel == 1) app.iduanju.huangguo.HuangguoFeedPage(onOpenDetail, aiOnly = true)
+                            else FeedPage(s, onOpenDetail) { cover -> if (cover == null) heroCovers.remove(s.label) else heroCovers[s.label] = cover }
+                        }
+                    }
+                } else if (s.subs().isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("「${s.label}」Android 版尚未移植", color = c.secondary, fontSize = 14.sp)
                     }
@@ -232,7 +249,8 @@ private fun ChannelSheet(pages: List<Any>, labels: List<String>, current: Int, o
             pages.forEachIndexed { pi, p ->
                 val subs: List<String> = when (p) {
                     is HomeSource -> when (p) {
-                        HomeSource.huangguo -> listOf("视频站", "AI 站", "App 源")
+                        HomeSource.huangguo -> listOf("视频站", "App 源")
+                        HomeSource.ai -> p.subs().map { it.subLabel } + if (app.iduanju.IdjApp.instance.cms.adultUnlocked) listOf("黄果 AI 站") else emptyList()
                         HomeSource.channels, HomeSource.manga -> emptyList()
                         else -> p.subs().map { it.subLabel }
                     }

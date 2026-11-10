@@ -47,7 +47,8 @@ object CoverDecryptInterceptor : Interceptor {
  * Chips: 视频站 categories + AI 站 channels + App 源 tabs (iOS splits them across 黄果 / AI剧 pages).
  */
 @Composable
-fun HuangguoFeedPage(onOpen: (String) -> Unit) {
+/** iOS splits 黄果 across two pages: 「黄果」 = 视频站 + App 源, 「AI剧」 → 黄果 AI 站 ([aiOnly]). */
+fun HuangguoFeedPage(onOpen: (String) -> Unit, aiOnly: Boolean = false) {
     val c = IdjThemeColors
     if (!IdjApp.instance.cms.adultUnlocked) {
         Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -56,12 +57,12 @@ fun HuangguoFeedPage(onOpen: (String) -> Unit) {
         return
     }
     val hg = IdjApp.instance.huangguo
-    val base = HuangguoClient.videoChannels.map { "video/" + it.slug to it.title } + HuangguoClient.aiChannels.map { "ai/" + it.slug to "AI·" + it.title }
+    val base = if (aiOnly) HuangguoClient.aiChannels.map { "ai/" + it.slug to it.title } else HuangguoClient.videoChannels.map { "video/" + it.slug to it.title }
     var cats by remember { mutableStateOf(base) }
     LaunchedEffect(Unit) {
-        runCatching { withContext(Dispatchers.IO) { hg.legacyChannels() } }.getOrNull()?.let { tabs -> cats = base + tabs.map { "legacy/" + it.slug to "App·" + it.title } }
+        if (!aiOnly) runCatching { withContext(Dispatchers.IO) { hg.legacyChannels() } }.getOrNull()?.let { tabs -> cats = base + tabs.map { "legacy/" + it.slug to "App·" + it.title } }
     }
-    FeedGrid("huangguo", cats, { cat, page ->
+    FeedGrid(if (aiOnly) "huangguo-ai" else "huangguo", cats, { cat, page ->
         val sub = HuangguoSub.valueOf(cat.substringBefore('/')); val slug = cat.substringAfter('/')
         val ch = (HuangguoClient.videoChannels + HuangguoClient.aiChannels).firstOrNull { it.sub == sub && it.slug == slug }
             ?: app.iduanju.core.huangguo.HuangguoChannel(sub, slug, slug)
