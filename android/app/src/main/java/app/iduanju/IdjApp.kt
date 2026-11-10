@@ -19,6 +19,7 @@ class IdjApp : Application() {
         instance = this
         settings = SettingsStore(this)
         HGPlayerDevice.storageDir = filesDir
+        app.iduanju.core.hongguo.HGNet.playerUsesSystemProxy = settings.playerUsesSystemProxy
         HGPlayerDevice.overrideProvider = {
             settings.playerDeviceOverride()?.let { it }
         }

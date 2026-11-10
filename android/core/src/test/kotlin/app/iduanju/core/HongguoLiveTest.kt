@@ -52,7 +52,7 @@ class HongguoLiveTest {
         println("[live] resolve vid=${ep.vid}")
         try {
             val r = client.resolve(ep.vid)
-            println("[live] resolve ok streams=${r.streams.size} url=${r.url?.take(60)} key=${r.key != null} err=${r.err}")
+            println("[live] resolve route=${client.lastPureRoute} ok streams=${r.streams.size} url=${r.url?.take(60)} key=${r.key != null} err=${r.err}")
             assertTrue(r.streams.isNotEmpty() || r.url != null)
             // Probe first bytes of media
             r.url?.let { u ->

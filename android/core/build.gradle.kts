@@ -8,6 +8,8 @@ dependencies {
 tasks.test {
     // live network tests only when -Plive is passed
     systemProperty("idj.live", project.findProperty("live")?.toString() ?: "")
+    systemProperty("idj.probe", project.findProperty("probe")?.toString() ?: "")
+    testLogging { showStandardStreams = true }
     project.findProperty("hgDevice")?.let { systemProperty("idj.hgDevice", it.toString()) }
     testLogging { events("passed", "failed", "skipped"); showStandardStreams = true; exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
 }

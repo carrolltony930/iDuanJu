@@ -22,18 +22,27 @@ import java.io.ByteArrayOutputStream
  * Direct-to-upstream port of iOS HongguoClient (rank / detail / resolve).
  * Soft reject = HTTP 200 + 0 bytes. Player session uses Proxy.NO_PROXY.
  */
+object HGNet {
+    @Volatile var playerUsesSystemProxy: Boolean = false
+}
+
 class HongguoClient(
     val dataDir: File,
     private val http: OkHttpClient = HGDevice.defaultHttp(),
 ) {
-    private val playerHttp: OkHttpClient = OkHttpClient.Builder()
+    private val playerHttpDirect: OkHttpClient = OkHttpClient.Builder()
         .proxy(Proxy.NO_PROXY)
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(25, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
+    private val playerHttpSystem: OkHttpClient = playerHttpDirect.newBuilder().proxy(null).build()
+    /** iOS parity: the player session bypasses proxies. [HGNet.playerUsesSystemProxy] is a developer escape hatch (emulator egress). */
+    private val playerHttp: OkHttpClient get() = if (HGNet.playerUsesSystemProxy) playerHttpSystem else playerHttpDirect
 
     @Volatile private var device: HGDevice? = null
+    /** Diagnostics: which identity served the last successful pure resolve (override / oneshot / mint). */
+    @Volatile var lastPureRoute: String = ""
     private val vmDeviceId = vmID()
     private val vmInstallId = vmID()
     private val resolveCache = LinkedHashMap<String, Pair<HGResolvedVideo, Long>>()
@@ -431,10 +440,33 @@ class HongguoClient(
 
     fun resolveFresh(vid: String): HGResolvedVideo {
         var soft = false
+        val hasOverride = HGPlayerDevice.overrideProvider?.invoke()?.let { it.first.isNotEmpty() && it.second.isNotEmpty() } == true
+        if (!hasOverride && HGOneShotDevice.enabled) {
+            // No override: a locally minted device is soft-rejected from its first request, a fresh
+            // pure-profile registration is served once. Spend one registration per level.
+            // probe 2026-11-11: 11/12 fresh registrations served at a 6 s gap → allow one retry per level.
+            levels@ for (level in listOf(3, 4)) {
+                for (attempt in 0 until 2) {
+                    val ids = HGOneShotDevice.register(http) ?: run { System.err.println("[HG] oneshot register failed"); null } ?: break@levels
+                    try {
+                        val r = resolvePure(vid, level, ids)
+                        if (r.err == BYTEVC2 && level == 3) continue@levels
+                        lastPureRoute = "oneshot"
+                        return r
+                    } catch (_: PlayerEmptyBody) {
+                        soft = true; System.err.println("[HG] oneshot pure empty level=$level attempt=$attempt")
+                        Thread.sleep(800)
+                    } catch (e: Exception) {
+                        System.err.println("[HG] oneshot pure error level=$level: $e"); break
+                    }
+                }
+            }
+        }
         for (level in listOf(3, 4)) {
             try {
                 val r = resolvePure(vid, level)
                 if (r.err == BYTEVC2 && level == 3) continue
+                lastPureRoute = if (hasOverride) "override" else "mint"
                 return r
             } catch (_: PlayerEmptyBody) {
                 soft = true; System.err.println("[HG] resolvePure empty level=$level")
@@ -483,9 +515,9 @@ class HongguoClient(
         return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 32)}"
     }
 
-    private fun purePlayerPairs(did: String, iid: String): List<Pair<String, String>> {
-        val cdid = stableUUID("hongguo-player-cdid:$did")
-        val openudid = Bytes.hex(MessageDigest.getInstance("SHA-256").digest("hongguo-player-openudid:$did".toByteArray()).copyOfRange(0, 8))
+    private fun purePlayerPairs(did: String, iid: String, cdidIn: String? = null, openudidIn: String? = null): List<Pair<String, String>> {
+        val cdid = cdidIn ?: stableUUID("hongguo-player-cdid:$did")
+        val openudid = openudidIn ?: Bytes.hex(MessageDigest.getInstance("SHA-256").digest("hongguo-player-openudid:$did".toByteArray()).copyOfRange(0, 8))
         val vc = PURE_VC
         return listOf(
             "iid" to iid, "device_id" to did, "ac" to "wifi", "channel" to "xiaomi_8662_64", "aid" to "8662",
@@ -498,7 +530,37 @@ class HongguoClient(
         )
     }
 
-    private fun resolvePure(vid: String, level: Int): HGResolvedVideo {
+    /**
+     * Diagnostics only (soft-reject research): one pure video_model request for an explicit identity.
+     * Returns "P" (video_model present), "F" (HTTP 200 + 0 bytes soft reject), "C<code>", "H<status>" or "E".
+     */
+    fun probePure(vid: String, level: Int, did: String, iid: String, cdid: String? = null, openudid: String? = null): String {
+        val body = J.encodeSorted(mapOf("video_id" to vid, "biz_param" to mapOf(
+            "video_id_type" to 0, "need_all_video_definition" to true, "video_platform" to 3, "device_level" to level)))
+        val nowMs = nowMs()
+        val (q, headers) = HGPlayerSign.signPOST(PURE_PATH, purePlayerPairs(did, iid, cdid, openudid), nowMs, did, PURE_VN, body)
+        val rb = Request.Builder().url("https://$PURE_HOST$PURE_PATH?$q").post(body.toRequestBody("application/json; charset=UTF-8".toMediaType()))
+        for ((k, v) in headers) if (v.isNotEmpty()) rb.header(k, v)
+        rb.header("User-Agent", PURE_UA).header("x-ss-dp", "8662").header("lc", "101")
+            .header("x-reading-request", "$nowMs-${(nowMs * 1_000_000L) and 0x7fffffff}")
+        return try {
+            playerHttp.newCall(rb.build()).execute().use { resp ->
+                val data = resp.body?.bytes() ?: ByteArray(0)
+                when {
+                    resp.code != 200 -> "H${resp.code}"
+                    data.isEmpty() -> "F"
+                    else -> {
+                        val j = J.parse(data)
+                        val code = J.str(j.opt("code"))
+                        if (code.isNotEmpty() && code != "0") "C$code"
+                        else if (videoModelJSON(J.dict(j.opt("data")).opt("video_model")) != null) "P" else "C?"
+                    }
+                }
+            }
+        } catch (e: Exception) { "E" }
+    }
+
+    private fun resolvePure(vid: String, level: Int, ids: HGOneShotDevice.Identity? = null): HGResolvedVideo {
         val bodyObj = mapOf(
             "video_id" to vid,
             "biz_param" to mapOf(
@@ -508,11 +570,11 @@ class HongguoClient(
         )
         val body = J.encodeSorted(bodyObj)
         var last: Exception = PlayerEmptyBody()
-        for (attempt in 0 until 2) {
+        for (attempt in 0 until (if (ids != null) 1 else 2)) {
             if (attempt > 0) Thread.sleep(500)
             val nowMs = nowMs()
-            val (did, iid) = purePlayerIds()
-            val (q, headers) = HGPlayerSign.signPOST(PURE_PATH, purePlayerPairs(did, iid), nowMs, did, PURE_VN, body)
+            val (did, iid) = ids?.let { it.did to it.iid } ?: purePlayerIds()
+            val (q, headers) = HGPlayerSign.signPOST(PURE_PATH, purePlayerPairs(did, iid, ids?.cdid, ids?.openudid), nowMs, did, PURE_VN, body)
             val rb = Request.Builder().url("https://$PURE_HOST$PURE_PATH?$q")
                 .post(body.toRequestBody("application/json; charset=UTF-8".toMediaType()))
             for ((k, v) in headers) if (v.isNotEmpty()) rb.header(k, v)

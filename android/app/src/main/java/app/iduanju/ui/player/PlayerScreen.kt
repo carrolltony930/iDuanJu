@@ -90,6 +90,9 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
             override fun onTracksChanged(t: androidx.media3.common.Tracks) {
                 tags = TechTags.from(player, quality)
             }
+            // videoFormat/audioFormat are populated once the renderers start, after onTracksChanged
+            override fun onRenderedFirstFrame() { tags = TechTags.from(player, quality) }
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) { tags = TechTags.from(player, quality) }
         }
         player.addListener(l)
         onDispose { player.removeListener(l); player.release() }
@@ -118,7 +121,8 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
             if (resume != null && resume.episodeIndex == epIndex && resume.seconds > 3 && resume.fraction < 0.95f) player.seekTo((resume.seconds * 1000).toLong())
             player.prepare(); player.play()
             // precache next episode (iOS preloads the next stream while this one plays)
-            d.episodes.getOrNull(epIndex + 1)?.let { EpisodeCache.preload(it.vid) }
+            // spaced ≥6 s from the current resolve: fresh one-shot registrations back-to-back get soft-rejected (probe 2026-11-11)
+            d.episodes.getOrNull(epIndex + 1)?.let { delay(6_000); EpisodeCache.preload(it.vid) }
         } catch (e: Exception) {
             status = ""; error = e.message ?: "播放失败"
         }
@@ -329,7 +333,7 @@ data class TechTags(val res: String? = null, val range: String? = null, val code
     companion object {
         fun from(p: ExoPlayer, quality: String?): TechTags {
             val v = p.videoFormat; val a = p.audioFormat
-            val res = quality ?: v?.let { f -> val h = minOf(f.width, f.height); if (h > 0) "${h}P" else null }
+            val res = quality?.uppercase() ?: v?.let { f -> val h = minOf(f.width, f.height); if (h > 0) "${h}P" else null }
             val codec = v?.sampleMimeType?.let { when { it.contains("hevc") -> "HEVC"; it.contains("avc") -> "H.264"; it.contains("av01") -> "AV1"; else -> null } }
             val range = if (v?.colorInfo?.colorTransfer == androidx.media3.common.C.COLOR_TRANSFER_ST2084 || v?.colorInfo?.colorTransfer == androidx.media3.common.C.COLOR_TRANSFER_HLG) "HDR" else "SDR"
             val audio = a?.let { f -> val n = when { f.sampleMimeType?.contains("mp4a") == true -> "AAC"; f.sampleMimeType?.contains("eac3") == true -> "E-AC-3"; else -> "音频" }

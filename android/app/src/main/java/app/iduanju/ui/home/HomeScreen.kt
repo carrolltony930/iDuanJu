@@ -290,13 +290,14 @@ private fun PosterHero(board: String, picks: List<HGSeries>, index: Int, setInde
                     HomeFmt.progress(s)?.let { HomeBadge(it, Modifier.align(Alignment.BottomEnd).padding(6.dp)) }
                 }
                 Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f).fillMaxHeight().padding(vertical = 4.dp)) {
+                Column(Modifier.weight(1f).fillMaxHeight().padding(vertical = 2.dp)) {
+                  Column(Modifier.weight(1f).fillMaxWidth()) {
                     Text(if (board.isEmpty()) "TOP ${i + 1}" else "$board · TOP ${i + 1}", color = c.accentWarm, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 0.6.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Text(s.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 24.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(s.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 23.sp)
                     val chips = s.tags.take(3)
                     if (chips.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             chips.forEach {
                                 Box(Modifier.height(20.dp).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(0.14f)).padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
@@ -306,12 +307,15 @@ private fun PosterHero(board: String, picks: List<HGSeries>, index: Int, setInde
                         }
                     }
                     val line = HomeFmt.metaLine(s)
-                    if (line.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(line, color = Color.White.copy(0.72f), fontSize = 12.sp, maxLines = 1) }
+                    if (line.isNotEmpty()) { Spacer(Modifier.height(6.dp)); Text(line, color = Color.White.copy(0.72f), fontSize = 12.sp, maxLines = 1) }
                     val blurb = s.subtitle?.trim()
                     if (!blurb.isNullOrEmpty() && blurb != HomeFmt.progress(s)) {
-                        Spacer(Modifier.height(8.dp)); Text(blurb, color = Color.White.copy(0.66f), fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(6.dp))
+                        // blurb yields height first so the CTA never gets clipped on long titles
+                        Text(blurb, color = Color.White.copy(0.66f), fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     }
-                    Spacer(Modifier.weight(1f))
+                  }
+                    Spacer(Modifier.height(6.dp))
                     Row(
                         Modifier.height(32.dp).clip(RoundedCornerShape(50)).background(Color.White).padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,

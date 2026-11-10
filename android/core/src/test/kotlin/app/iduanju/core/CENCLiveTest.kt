@@ -27,6 +27,7 @@ class CENCLiveTest {
         val page = client.rank(HGRankSub.hot, HGRankGenre.all)
         val detail = client.detail(page.items.first().seriesId, web = false)
         val r = client.resolve(detail.episodes.first().vid)
+        println("[cenc] route=${client.lastPureRoute}")
         val s = r.streams.first()
         assertTrue(s.key.isNotEmpty())
         val conn = URI(s.url).toURL().openConnection() as HttpURLConnection

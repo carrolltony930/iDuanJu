@@ -17,6 +17,11 @@ class SettingsStore(ctx: Context) {
         else sp.edit().putString("hg.purePlayerDevice", "$did,$iid").apply()
     }
 
+    /** Developer option: let the player/media download follow the system proxy (default off = iOS parity). */
+    var playerUsesSystemProxy: Boolean
+        get() = sp.getBoolean("dev.playerSystemProxy", false)
+        set(v) { sp.edit().putBoolean("dev.playerSystemProxy", v).apply(); app.iduanju.core.hongguo.HGNet.playerUsesSystemProxy = v }
+
     var adStripEnabled: Boolean
         get() = sp.getBoolean("adStrip", true)
         set(v) { sp.edit().putBoolean("adStrip", v).apply() }

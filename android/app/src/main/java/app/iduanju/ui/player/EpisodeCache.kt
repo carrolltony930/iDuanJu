@@ -24,8 +24,10 @@ data class Playable(val uri: String, val quality: String?, val codec: String, va
 object EpisodeCache {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val inflight = ConcurrentHashMap<String, Deferred<Playable>>()
-    private val http = OkHttpClient.Builder().proxy(Proxy.NO_PROXY)
+    private val httpDirect = OkHttpClient.Builder().proxy(Proxy.NO_PROXY)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
+    private val httpSystem = httpDirect.newBuilder().proxy(null).build()
+    private val http: OkHttpClient get() = if (app.iduanju.core.hongguo.HGNet.playerUsesSystemProxy) httpSystem else httpDirect
 
     private fun dir(): File = File(IdjApp.instance.cacheDir, "hg-play").apply { mkdirs() }
 
