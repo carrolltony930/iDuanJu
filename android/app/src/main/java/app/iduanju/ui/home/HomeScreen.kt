@@ -118,8 +118,9 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}) {
     val c = IdjThemeColors
     // iOS HomeSource.all: [红果, 黄果, AI剧] + visible sites (采集站 / plugins) + [频道, 漫画]
     val sites = IdjApp.instance.cms.visibleSites
-    val pages: List<Any> = listOf<Any>(HomeSource.hongguo, HomeSource.huangguo, HomeSource.ai) + sites + listOf(HomeSource.channels, HomeSource.manga)
-    val labels = pages.map { (it as? HomeSource)?.label ?: (it as app.iduanju.core.cms.CMSSite).name }
+    val plugins = IdjApp.instance.plugins.visible(IdjApp.instance.cms.adultUnlocked).filter { it.type == "video" || it.type == "shortdrama" }
+    val pages: List<Any> = listOf<Any>(HomeSource.hongguo, HomeSource.huangguo, HomeSource.ai) + sites + plugins + listOf(HomeSource.channels, HomeSource.manga)
+    val labels = pages.map { when (it) { is HomeSource -> it.label; is app.iduanju.core.cms.CMSSite -> it.name; else -> (it as app.iduanju.plugin.PluginStore.Installed).name } }
     val pager = rememberPagerState { pages.size }
     val scope = rememberCoroutineScope()
     val heroCovers = remember { mutableStateMapOf<String, String>() }
@@ -173,6 +174,7 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}) {
             HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 0) { page ->
                 val any = pages[page]
                 if (any is app.iduanju.core.cms.CMSSite) { SiteFeedPage(any, onOpenDetail); return@HorizontalPager }
+                if (any is app.iduanju.plugin.PluginStore.Installed) { PluginFeedPage(any, onOpenDetail); return@HorizontalPager }
                 val s = any as HomeSource
                 if (s.subs().isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

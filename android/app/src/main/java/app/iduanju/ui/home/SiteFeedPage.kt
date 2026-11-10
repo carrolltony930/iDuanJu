@@ -28,17 +28,40 @@ import app.iduanju.ui.theme.IdjThemeColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** iOS HomeFeedPage for `.site(cms)`: 最新 + category chips, 3-column poster grid with paging. */
+/** iOS HomeFeedPage for `.site(cms)`. */
 @Composable
 fun SiteFeedPage(site: CMSSite, onOpen: (String) -> Unit) {
+    FeedGrid("cms:" + site.key, listOf("" to "最新") + site.categories.map { it.id to it.name }, { cat, page ->
+        val o = MacCMS.fetch(site.api, buildMap { put("ac", "detail"); put("pg", page.toString()); if (cat.isNotEmpty()) put("t", cat) })
+        if (cat.isEmpty() && page == 1) MacCMS.parseCategories(o).takeIf { it.isNotEmpty() }?.let { IdjApp.instance.cms.cacheCategories(site.key, it) }
+        MacCMS.page(o, site.key, page)
+    }, onOpen)
+}
+
+/** iOS HomeFeedPage for `.site(plugin)` (JSVideoProvider): 推荐 + the categories `home()` returned. */
+@Composable
+fun PluginFeedPage(p: app.iduanju.plugin.PluginStore.Installed, onOpen: (String) -> Unit) {
+    var cats by remember(p.id) { mutableStateOf(listOf("" to "推荐")) }
+    FeedGrid("plugin:" + p.id, cats, { cat, page ->
+        val v = IdjApp.instance.plugins.video(p.id)
+        try {
+            val r = v.list(cat, page)
+            if (cat.isEmpty()) v.categories.takeIf { it.isNotEmpty() }?.let { cs -> cats = listOf("" to "推荐") + cs.map { it.id to it.name } }
+            r
+        } catch (e: app.iduanju.core.plugin.PluginException) { throw Exception(e.friendly) }
+    }, onOpen)
+}
+
+/** 最新/推荐 + category chips, 3-column poster grid with paging. */
+@Composable
+fun FeedGrid(key: String, cats: List<Pair<String, String>>, load: (String, Int) -> app.iduanju.core.hongguo.HGPage, onOpen: (String) -> Unit) {
     val c = IdjThemeColors
-    val cats = listOf("" to "最新") + site.categories.map { it.id to it.name }
-    var sel by remember(site.key) { mutableIntStateOf(0) }
-    val items = remember(site.key, sel) { mutableStateListOf<HGSeries>() }
-    var page by remember(site.key, sel) { mutableIntStateOf(1) }
-    var hasMore by remember(site.key, sel) { mutableStateOf(true) }
-    var loading by remember(site.key, sel) { mutableStateOf(false) }
-    var error by remember(site.key, sel) { mutableStateOf<String?>(null) }
+    var sel by remember(key) { mutableIntStateOf(0) }
+    val items = remember(key, sel) { mutableStateListOf<HGSeries>() }
+    var page by remember(key, sel) { mutableIntStateOf(1) }
+    var hasMore by remember(key, sel) { mutableStateOf(true) }
+    var loading by remember(key, sel) { mutableStateOf(false) }
+    var error by remember(key, sel) { mutableStateOf<String?>(null) }
     val grid = rememberLazyGridState()
 
     suspend fun more() {
@@ -46,18 +69,14 @@ fun SiteFeedPage(site: CMSSite, onOpen: (String) -> Unit) {
         loading = true
         try {
             val cat = cats.getOrNull(sel)?.first ?: ""
-            val p = withContext(Dispatchers.IO) {
-                val o = MacCMS.fetch(site.api, buildMap { put("ac", "detail"); put("pg", page.toString()); if (cat.isNotEmpty()) put("t", cat) })
-                if (cat.isEmpty() && page == 1) MacCMS.parseCategories(o).takeIf { it.isNotEmpty() }?.let { IdjApp.instance.cms.cacheCategories(site.key, it) }
-                MacCMS.page(o, site.key, page)
-            }
+            val p = withContext(Dispatchers.IO) { load(cat, page) }
             val seen = items.map { it.seriesId }.toHashSet()
             items.addAll(p.items.filter { seen.add(it.seriesId) })
             hasMore = p.hasMore; page += 1; error = null
         } catch (e: Exception) { error = e.message ?: "加载失败"; hasMore = false }
         finally { loading = false }
     }
-    LaunchedEffect(site.key, sel) { more() }
+    LaunchedEffect(key, sel) { more() }
     val nearEnd by remember { derivedStateOf { (grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= grid.layoutInfo.totalItemsCount - 6 } }
     LaunchedEffect(nearEnd, items.size) { if (nearEnd && items.isNotEmpty()) more() }
 

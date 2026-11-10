@@ -75,11 +75,10 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
     var tags by remember { mutableStateOf(TechTags()) }
     var retry by remember { mutableIntStateOf(0) }
 
+    val httpFactory = remember { androidx.media3.datasource.DefaultHttpDataSource.Factory().setUserAgent(app.iduanju.core.cms.MacCMS.UA).setAllowCrossProtocolRedirects(true) }
     val player = remember {
         ExoPlayer.Builder(ctx).setMediaSourceFactory(
-            androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                androidx.media3.datasource.DefaultDataSource.Factory(ctx,
-                    androidx.media3.datasource.DefaultHttpDataSource.Factory().setUserAgent(app.iduanju.core.cms.MacCMS.UA).setAllowCrossProtocolRedirects(true)))
+            androidx.media3.exoplayer.source.DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(ctx, httpFactory))
         ).build().also { it.playWhenReady = true }
     }
     DisposableEffect(Unit) {
@@ -119,6 +118,9 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
             val p = EpisodeCache.get(ep) { status = it }.await()
             quality = p.quality
             status = ""
+            // plugin / 采集站 streams may need Referer/Origin/UA on every segment request
+            httpFactory.setUserAgent(p.headers.entries.firstOrNull { it.key.equals("user-agent", true) }?.value ?: app.iduanju.core.cms.MacCMS.UA)
+            httpFactory.setDefaultRequestProperties(p.headers.filterKeys { !it.equals("user-agent", true) })
             player.setMediaItem(
                 MediaItem.Builder().setUri(if (p.uri.startsWith("/")) android.net.Uri.fromFile(java.io.File(p.uri)) else android.net.Uri.parse(p.uri))
                     .apply { if (p.hls) setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8) }.build()

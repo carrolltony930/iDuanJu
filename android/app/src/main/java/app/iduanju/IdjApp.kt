@@ -14,6 +14,7 @@ class IdjApp : Application() {
     lateinit var library: LibraryStore
         private set
     lateinit var cms: app.iduanju.data.CMSStore
+    lateinit var plugins: app.iduanju.plugin.PluginStore
         private set
 
     override fun onCreate() {
@@ -28,6 +29,7 @@ class IdjApp : Application() {
         hongguo = HongguoClient(filesDir)
         library = LibraryStore(this)
         cms = app.iduanju.data.CMSStore(this)
+        plugins = app.iduanju.plugin.PluginStore(this)
         app.iduanju.core.hls.HLSAdFilter.enabled = settings.adStripEnabled
     }
 
