@@ -6,7 +6,7 @@ import app.iduanju.core.hongguo.HongguoClient
 import app.iduanju.data.LibraryStore
 import app.iduanju.data.SettingsStore
 
-class IdjApp : Application() {
+class IdjApp : Application(), coil.ImageLoaderFactory {
     lateinit var settings: SettingsStore
         private set
     lateinit var hongguo: HongguoClient
@@ -18,6 +18,13 @@ class IdjApp : Application() {
         private set
     lateinit var tg: app.iduanju.tg.TGStore
         private set
+    lateinit var huangguo: app.iduanju.core.huangguo.HuangguoClient
+        private set
+
+    /** Covers: 黄果 CDNs obfuscate images (AES / XOR) — decoded in an OkHttp interceptor. */
+    override fun newImageLoader(): coil.ImageLoader = coil.ImageLoader.Builder(this)
+        .okHttpClient { okhttp3.OkHttpClient.Builder().addInterceptor(app.iduanju.huangguo.CoverDecryptInterceptor).build() }
+        .crossfade(true).build()
 
     override fun onCreate() {
         super.onCreate()
@@ -33,6 +40,7 @@ class IdjApp : Application() {
         cms = app.iduanju.data.CMSStore(this)
         plugins = app.iduanju.plugin.PluginStore(this)
         tg = app.iduanju.tg.TGStore(this)
+        huangguo = app.iduanju.core.huangguo.HuangguoClient(filesDir, app.iduanju.huangguo.PrefsMap(this))
         app.iduanju.core.hls.HLSAdFilter.enabled = settings.adStripEnabled
     }
 
