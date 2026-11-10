@@ -36,7 +36,7 @@ fun RootScreen() {
 
     Box(Modifier.fillMaxSize()) {
         NavHost(nav, startDestination = "home", modifier = Modifier.fillMaxSize()) {
-            composable("home") { HomeScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
+            composable("home") { HomeScreen(onOpenDetail = { nav.navigate("detail/$it") }, onSearch = { nav.navigate("search") }) }
             composable("search") { SearchScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
             composable("category") { CategoryScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
             composable("profile") { ProfileScreen() }
@@ -46,6 +46,7 @@ fun RootScreen() {
                     seriesId = sid,
                     onBack = { nav.popBackStack() },
                     onPlay = { s, ep -> nav.navigate("player/$s/$ep") },
+                    onOpenSeries = { nav.navigate("detail/$it") },
                 )
             }
             composable(

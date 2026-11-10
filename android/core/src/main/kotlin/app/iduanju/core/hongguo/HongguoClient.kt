@@ -197,6 +197,99 @@ class HongguoClient(
         return J.dict(j.opt("data"))
     }
 
+    // ---- search (list.go buildSearchTabURL / parseSearchJSONForTab) ----
+    @Volatile private var lastSearchQuery = ""
+    @Volatile private var lastSearchAt = 0L
+    @Volatile private var searchEntered = false
+
+    private fun selectorId(f: HGContentFilter): String? = when (f) {
+        HGContentFilter.human -> "content_type_short_play"; HGContentFilter.comic -> "content_type_dynamic_comic"
+        HGContentFilter.ai -> "content_type_ai_dynamic_comic"; HGContentFilter.all -> null
+    }
+
+    private fun contentFilterOf(vd: JSONObject): HGContentFilter? {
+        val det = J.dict(vd.opt("video_detail"))
+        return when (J.firstPositive(vd.opt("content_type"), det.opt("content_type"))) {
+            1L -> HGContentFilter.human
+            1004L -> if (J.firstNonEmpty(J.str(det.opt("video_category_type")), J.str(vd.opt("video_category_type"))) == "ai_video") HGContentFilter.ai else HGContentFilter.comic
+            else -> null
+        }
+    }
+
+    /** cursor = previous nextCursor ("offset|passback"). Series-landing expansion (系列剧卡) not yet ported. */
+    fun search(q: String, contentFilter: HGContentFilter = HGContentFilter.all, cursor: String? = null): HGPage {
+        val d = ensureDevice()
+        var offset = 0; var passback = ""
+        if (!cursor.isNullOrEmpty()) {
+            val parts = cursor.split("|", limit = 2)
+            offset = parts[0].toIntOrNull() ?: 0
+            if (parts.size > 1) passback = parts[1]
+        }
+        val last = lastSearchQuery.ifEmpty { q }
+        val interval = if (lastSearchAt > 0) maxOf(0L, nowMs() - lastSearchAt) else 0L
+        val first = offset == 0 && !searchEntered
+        if (offset == 0) { searchEntered = true; lastSearchQuery = q; lastSearchAt = nowMs() }
+        val sid = d.cdid.ifEmpty { "0" }
+        var u = "https://api5-normal-sinfonlinec.fqnovel.com/reading/bookapi/search/tab/v?" +
+            "bookshelf_search_plan=4&live_room_id=0&user_is_login=0&bookstore_tab=-1&biz_config_ctx_infos&last_book_id=0" +
+            "&last_search_page_query=" + GoURL.queryEscape(last) +
+            "&clicked_content=page_search_button&report_info&use_lynx=false&last_book_consume_time=0&product_id=0&line_words_num=0" +
+            "&tab_name&last_consume_interval=0&pad_column_cover=0&last_chapter_id=0&only_feed=false&offset=$offset" +
+            "&from_rs=false&only_large_card=false&query=" + GoURL.queryEscape(q) +
+            "&count=0&search_source=0&search_source_id=clks%23%23%23&use_correct=false&last_search_page_interval=$interval" +
+            "&seed_product_id=0&from_half_screen=false&is_first_enter_search=$first" +
+            "&iid=${d.iid}&device_id=${d.deviceId}&ac=wifi&channel=vivo_8662_64&aid=8662&app_name=novelread" +
+            "&version_code=73532&version_name=7.3.5.32&device_platform=android&os=android&ssmix=a" +
+            "&device_type=NX809J&device_brand=Nubia&language=zh&os_api=31&os_version=12" +
+            "&manifest_version_code=73532&resolution=1280*720&dpi=240&update_version_code=73532&_rticket=${nowMs()}" +
+            "&normal_session_cnt_in_day=1&gender=2&cold_start_session_cnt_in_day=1&host_abi=arm64-v8a&dragon_device_type=pad" +
+            "&sys_mini_window=0&pv_player=73532&app_mini_window=0&normal_session_id=" + GoURL.queryEscape("$sid#1") +
+            "&compliance_status=0&har_status=1&cold_start_session_id=" + GoURL.queryEscape(sid) +
+            "&cold_start_session_cnt_in_life=1&charging=0&normal_session_cnt_in_life=1&is_power_save_mode=0&app_dark_mode=0" +
+            "&screen_brightness=102&battery_pct=80&down_speed=30000&sys_dark_mode=0&need_personal_recommend=1&player_so_load=1" +
+            "&font_scale=100&is_android_pad_screen=1&network_type=4&rom_version=Nubia-user+12.0.0+20171130.276299+release-keys" +
+            "&current_volume=33&cdid=${d.cdid}&client_ab_info=" +
+            GoURL.queryEscape("""{"middle_style_from_video":false,"result_style_from_video":false}""")
+        selectorId(contentFilter)?.let { u += "&selected_items=" + GoURL.queryEscape(it) }
+        if (passback.isNotEmpty()) u += "&passback=" + GoURL.queryEscape(passback)
+
+        var lastErr: Exception = ProviderException.upstream("搜索失败")
+        for (attempt in 0 until 3) {
+            if (attempt > 0) Thread.sleep(1600)
+            val j = try { list(u, signed = true) } catch (e: Exception) { lastErr = e; continue }
+            val code = J.str(j.opt("code"))
+            if (code != "0") {
+                lastErr = ProviderException.upstream("search code=$code ${J.str(j.opt("message"))}")
+                if (code == "100103") continue
+                break
+            }
+            for (tab in J.arr(j.opt("search_tabs"))) {
+                val tm = J.dict(tab)
+                if (!(J.int(tm.opt("tab_type")) == 11 || J.str(tm.opt("title")) == "综合")) continue
+                val items = ArrayList<HGSeries>(); val seen = HashSet<String>()
+                for (c in J.arr(tm.opt("data"))) {
+                    val cm = J.dict(c)
+                    var vds = J.arr(cm.opt("video_data"))
+                    if (vds.isEmpty()) (cm.opt("video_data") as? JSONObject)?.let { vds = listOf(it) }
+                    val fallbackSid = firstID(cm, "book_id", "search_result_id")
+                    for (v in vds) {
+                        val vm = J.dict(v)
+                        if (contentFilter != HGContentFilter.all && contentFilterOf(vm) != contentFilter) continue
+                        val s = parseVideoData(vm)
+                        if (s.seriesId.isEmpty()) s.seriesId = fallbackSid
+                        if (s.seriesId.isEmpty() && s.title.isEmpty()) continue
+                        if (s.seriesId.isNotEmpty() && !seen.add(s.seriesId)) continue
+                        items.add(s)
+                    }
+                }
+                val next = J.int(tm.opt("next_offset"))
+                return HGPage(items, J.bool(tm.opt("has_more")), next, "$next|${J.str(tm.opt("passback"))}")
+            }
+            lastErr = ProviderException.upstream("search 缺少综合栏")
+        }
+        throw lastErr
+    }
+
     // ---- rank ----
     fun rank(sub: HGRankSub, genre: HGRankGenre, offset: Int = 0, seenIds: List<String> = emptyList()): HGPage {
         val selected = rankSelected[genre] ?: throw ProviderException.invalid("${genre.label} 没有 ${sub.label} 榜")
@@ -625,6 +718,14 @@ class HongguoClient(
         s.followCount = J.firstPositive(vd.opt("followed_cnt"), vd.opt("follow_cnt"), vd.opt("collect_cnt"), det.opt("followed_cnt"))
         s.onlineTime = J.unix(vd.opt("create_time")).let { if (it == 0L) J.unix(vd.opt("first_online_time")) else it }
         if (s.episodeCount == 0) s.episodeCount = J.int(det.opt("episode_cnt"))
+        (vd.opt("category_schema") as? String)?.let { schema ->
+            (J.parseAny(schema) as? org.json.JSONArray)?.let { arr ->
+                s.tags = (0 until arr.length()).mapNotNull { i ->
+                    val m = arr.optJSONObject(i) ?: return@mapNotNull null
+                    J.firstNonEmpty(J.str(m.opt("name")), J.str(m.opt("category_name"))).ifEmpty { null }
+                }
+            }
+        }
         val al = J.dict(vd.opt("album_info"))
         if (al.length() > 0) {
             if (s.title.isEmpty()) s.title = J.str(al.opt("title"))

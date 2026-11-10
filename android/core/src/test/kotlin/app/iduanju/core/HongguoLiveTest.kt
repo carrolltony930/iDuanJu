@@ -73,4 +73,11 @@ class HongguoLiveTest {
             throw e
         }
     }
+
+    @Test
+    fun signedSearch() {
+        val page = client.search("总裁")
+        println("[live] search 总裁 items=${page.items.size} first=${page.items.firstOrNull()?.title} hasMore=${page.hasMore}")
+        assertTrue("search empty", page.items.isNotEmpty())
+    }
 }
