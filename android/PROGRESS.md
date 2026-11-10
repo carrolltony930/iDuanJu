@@ -1,6 +1,6 @@
 # Android 进度
 
-更新：2026-11-11 05:25（Asia/Shanghai）· 断点续做：先看「当前进行中」
+更新：2026-11-11 05:45（Asia/Shanghai）· 断点续做：先看「当前进行中」
 
 ## 当前进行中
 - 对比截图（shots/compare/，本地）：01 首页、02 频道面板、03 搜索、04 详情、05 播放器、06 选集面板、07 弹幕 已出（截图改用 `adb emu screenrecord screenshot`：视频 SurfaceView 在 TCG 下会让 `screencap` 返回旧帧）
@@ -49,6 +49,9 @@
 - 6a5fd77 PROGRESS
 - d7b67c8 选集面板（季/区间/更新至）
 - e8a82c9 解码能力回退
+- 52a6ad4 低版本（API<31）封面模糊背景
+- 96c0088 弹幕去除 U+FFFC/BOM（安卓显示为 OBJ 方框）
+- 412e4ef 详情头图渐隐、简介字号对齐 iOS
 
 ## APK（/workspace/iduanju-android/dist，SHA256 见 dist/SHA256SUMS）
 - 见文末「APK」节（每次构建后更新）
