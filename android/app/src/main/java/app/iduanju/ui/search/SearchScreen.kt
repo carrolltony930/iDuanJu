@@ -67,6 +67,15 @@ fun SearchScreen(onOpenDetail: (String) -> Unit) {
     var hasMore by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf<String?>(null) }
+    // iOS SourceGate.searchSources: [红果, 黄果] + visible sites (黄果 only behind the adult gate on Android)
+    val ia = IdjApp.instance
+    val sources: List<Pair<String, String>> = remember(ia.cms.adultUnlocked) {
+        listOf("hongguo" to "红果") + (if (ia.cms.adultUnlocked) listOf("huangguo" to "黄果") else emptyList()) +
+            ia.cms.visibleSites.map { "cms:" + it.key to it.name } +
+            ia.plugins.visible(ia.cms.adultUnlocked).filter { it.type == "video" || it.type == "shortdrama" }.map { "plugin:" + it.id to it.name }
+    }
+    var source by remember { mutableStateOf("hongguo") }
+    var pageNo by remember { mutableIntStateOf(1) }
 
     LaunchedEffect(Unit) {
         if (hot.isEmpty()) try {
@@ -80,7 +89,18 @@ fun SearchScreen(onOpenDetail: (String) -> Unit) {
         loading = true; err = null
         scope.launch {
             try {
-                val p = withContext(Dispatchers.IO) { IdjApp.instance.hongguo.search(q, cursor = if (reset) null else cursor) }
+                if (reset) pageNo = 1
+                val src = source
+                val p = withContext(Dispatchers.IO) {
+                    when {
+                        src == "hongguo" -> ia.hongguo.search(q, cursor = if (reset) null else cursor)
+                        src == "huangguo" -> app.iduanju.core.hongguo.HGPage(ia.huangguo.search(q), false)
+                        src.startsWith("cms:") -> ia.cms.site(src.removePrefix("cms:"))?.let { app.iduanju.core.cms.MacCMS.search(it, q, pageNo) } ?: app.iduanju.core.hongguo.HGPage(emptyList(), false)
+                        else -> try { ia.plugins.video(src.removePrefix("plugin:"))?.search(q, pageNo) ?: app.iduanju.core.hongguo.HGPage(emptyList(), false) }
+                                catch (e: app.iduanju.core.plugin.PluginException) { throw Exception(e.friendly) }
+                    }
+                }
+                pageNo += 1
                 if (reset) items.clear()
                 val seen = items.map { it.seriesId }.toSet()
                 items.addAll(p.items.filter { it.seriesId !in seen })
@@ -157,6 +177,15 @@ fun SearchScreen(onOpenDetail: (String) -> Unit) {
                 items(rest.size) { i -> CompactRankRow(rest[i], i + 4, onOpenDetail) }
             }
         } else {
+            if (sources.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                sources.forEach { (id, name) ->
+                    val on = id == source
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { if (!on) { source = id; cursor = null; items.clear(); loadMore(true) } }) {
+                        Text(name, color = if (on) c.text else c.secondary, fontSize = if (on) 17.sp else 15.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
+                        Box(Modifier.padding(top = 3.dp).size(16.dp, 3.dp).clip(RoundedCornerShape(50)).background(if (on) c.accent else Color.Transparent))
+                    }
+                }
+            }
             LaunchedEffect(grid, items.size) {
                 snapshotFlow { grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }.collect { last ->
                     if (hasMore && !loading && last >= items.size - 4) loadMore(false)

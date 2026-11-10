@@ -1,9 +1,9 @@
 # Android 进度
 
-更新：2026-11-11 03:55（Asia/Shanghai）· 断点续做：先看「当前进行中」
+更新：2026-11-11 04:20（Asia/Shanghai）· 断点续做：先看「当前进行中」
 
 ## 当前进行中
-- 频道（TG）模拟器验收截图；然后黄果（HuangguoClient 移植）、漫画阅读器
+- 对比截图：频道面板 / 选集面板 / 弹幕播放器 / 漫画页（release 包，模拟器）；然后插件漫画（JSComicProvider）
 - 真数据 iOS↔Android 对比（shots/compare/，本地；仅非成人、非采集站截图进仓库 docs/screenshots/）：首页/详情/搜索已对齐，待做选集面板/频道面板/播放器控件
 - 注意：模拟器为 TCG 软渲染，debug 包首页常 ANR 被杀 → 截图用 release 包（同签名覆盖安装，数据保留）
 
@@ -17,11 +17,13 @@
 | HLS 去广告（逐条移植） | ✅ 10 测 |
 | 苹果 CMS（maccms v10） | ✅ bcaa66b，模拟器：分类/详情/HLS 播放，去广告 14 段 51 s |
 | idj1 JS 插件运行时（QuickJS） | ✅ 682f7f0/e057cd7/524b52d：宿主 API 全量（http 白名单+逐跳校验、html、crypto、codec、m3u8、storage、settings、log），视频插件首页/分类/搜索/详情/播放；「我的」安装/开关/删除 |
-| 漫画插件 / 漫画阅读器 | ❌（manifest 可装，阅读器未移植） |
+| 漫画插件（JSComicProvider） | ❌（manifest 可装，provider 未接） |
 | 弹幕（番茄评论接口签名、合并、轨道布局） | ✅ 5b5b587：JVM 实网 万妖图录传 第1集 126 条；叠层 UI 待模拟器目检 |
 | 搜索页（占位、历史/发现横滑 chips） | ✅ d7ba8b7 |
 | 频道（TG 公开频道网页预览 t.me/s，无需账号） | ✅ 6f8befc：解析器（iOS 同 fixture 测试）、实网 telegram 20 帖/13 视频、订阅/合并流/翻页/视频播放；不内置任何频道；TDLib 不移植 |
-| 黄果 | ❌ 进行中 |
+| 黄果（AI 站镜像+取流 API、huangguo.video、旧 App AES 接口、封面 AES/XOR 解码） | ✅ 4fe7553：JVM 实网 视频站 37 部/取流 HLS、AI 站 20 部/21 集/master #EXTM3U（x-cdn-auth 头）、封面解密为 JPEG 1086×1448、App 源 6 个 tab/19 部。成人片源：仅在成人开关打开后显示；未成年 + 非自愿题材过滤（视频站 50→37）；不截图、不进仓库 |
+| 漫画（包子漫画、MangaDex；首页/详情/阅读器 上下滚动+左右翻页、续读、收藏） | ✅ 468edfd：iOS fixture 测试；实网 包子 36 部/一人之下 823 章/17 页，MangaDex 30 部/96 章/37 页；离线下载未移植；插件漫画待做 |
+| 搜索多源（红果/黄果/采集站/插件 源切换） | ✅ |
 | 插件订阅 / 签名校验 / CF 验证 / 执行超时中断 | ❌（QuickJS 包装库无中断钩子：超时即弃用实例） |
 
 ## 提交（main）
@@ -34,7 +36,10 @@
 - 7d05d02 PROGRESS 中文化
 - d7ba8b7 搜索页对齐 iOS
 - 5b5b587 弹幕（签名移植 + 合并 + 轨道 + 叠层）
-- 6f8befc Telegram 频道页
+- 6f8befc Telegram 频道页（模拟器：订阅 telegram → 20 帖、视频帖点开即在播放器播放）
+- 3c19a61 频道：链接可点、预览卡样式
+- 4fe7553 黄果
+- 468edfd 漫画
 
 ## APK（/workspace/iduanju-android/dist，SHA256 见 dist/SHA256SUMS）
 - 见文末「APK」节（每次构建后更新）
@@ -73,8 +78,8 @@
 - AVD idj30（API 30 x86_64，TCG，2 GB）。SystemUI 常 ANR，`adb root` 后杀掉 systemui 恢复。
 
 ## 测试（2026-11-11 03:00）
-- 离线：TGParserTest 2（iOS fixture）、HGDanmakuTest、HGSignGolden 2、HLSAdFilter 10、Medusa 1、MacCMSTest 2、PluginHostTest 4（manifest/域名策略/crypto/html/m3u8/unpack/storage/重定向拦截/限流；3 个内置 iOS 插件均可解析）：全部 PASS
-- 在线（-Plive / -PcmsApi，地址只在运行时传入）：HongguoLiveTest 3、HGDanmaku live（126 条）、TG live（20 帖）、CENCLiveTest（route=oneshot）、MacCMSLiveTest、PluginHostLiveTest：PASS
+- 离线：HuangguoTest 4、MangaTest 2（iOS fixture）、TGParserTest 2（iOS fixture）、HGDanmakuTest、HGSignGolden 2、HLSAdFilter 10、Medusa 1、MacCMSTest 2、PluginHostTest 4（manifest/域名策略/crypto/html/m3u8/unpack/storage/重定向拦截/限流；3 个内置 iOS 插件均可解析）：全部 PASS
+- 在线（-Plive / -PcmsApi，地址只在运行时传入）：HongguoLiveTest 3、HGDanmaku live（126 条）、TG live（20 帖）、黄果 live（三子源）、漫画 live（包子/MangaDex）、CENCLiveTest（route=oneshot）、MacCMSLiveTest、PluginHostLiveTest：PASS
 - 模拟器（AVD idj30，API 30 x86_64，TCG，经宿主代理）：
   - 红果 E2E RESULT OK（注册→榜单→详情 202 集→1080p bytevc1 加密→解密 8,937,645 B ftyp），UI 播放 HEVC
   - CMS：源栏「采集A」、详情、HLS 播放
@@ -90,7 +95,8 @@
 
 ## 待做
 - 对比截图：搜索/选集面板/频道面板；差异修正
-- 黄果、漫画阅读器（插件 pages）、频道管理/屏蔽规则/下载
+- 插件漫画、频道管理/屏蔽规则/下载、漫画离线下载
+- 黄果在 iOS 分属「黄果」「AI剧」两页，Android 合并为「黄果」一页的 chips（视频站/AI·/App·）
 - 插件订阅/推荐插件、执行超时中断
 
 ## APK
