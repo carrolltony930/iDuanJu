@@ -306,7 +306,11 @@ class HGDanmakuClient(private val identity: () -> Pair<String, String>) {
             return HGDanmaku.Mode.scroll
         }
 
-        fun cleanControl(s: String): String = String(s.codePoints().map { if (it < 0x20 || it == 0x7F || it == 0x2028 || it == 0x2029) ' '.code else it }.toArray(), 0, s.codePointCount(0, s.length)).trim()
+        // U+FFFC (object replacement, left by stripped inline stickers) and BOM render as an "OBJ" box on Android; iOS draws nothing
+        fun cleanControl(s: String): String {
+            val cps = s.codePoints().filter { it != 0xFFFC && it != 0xFEFF }.map { if (it < 0x20 || it == 0x7F || it == 0x2028 || it == 0x2029) ' '.code else it }.toArray()
+            return String(cps, 0, cps.size).trim()
+        }
     }
 }
 

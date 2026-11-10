@@ -24,6 +24,11 @@ class HGDanmakuTest {
     }
 
     /** -Plive=1 : real signed request for a hot series' first episode. */
+    @Test fun cleanControlDropsObjectReplacement() {
+        assertEquals("真的帅啊", HGDanmakuClient.cleanControl("真的帅啊\uFFFC"))
+        assertEquals("a b", HGDanmakuClient.cleanControl("\uFEFFa\nb"))
+    }
+
     @Test fun live() {
         assumeTrue(System.getProperty("idj.live") == "1")
         val hg = HongguoClient(File("build/hg-live-data").also { it.mkdirs() })
