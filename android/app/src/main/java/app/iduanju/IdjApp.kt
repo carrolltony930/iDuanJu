@@ -26,6 +26,7 @@ class IdjApp : Application(), coil.ImageLoaderFactory {
     /** Covers: 黄果 CDNs obfuscate images (AES / XOR) — decoded in an OkHttp interceptor. */
     override fun newImageLoader(): coil.ImageLoader = coil.ImageLoader.Builder(this)
         .okHttpClient { okhttp3.OkHttpClient.Builder().addInterceptor(app.iduanju.huangguo.CoverDecryptInterceptor).build() }
+        .components { add(app.iduanju.plugin.PluginImageFetcher.Factory()) }
         .crossfade(true).build()
 
     override fun onCreate() {

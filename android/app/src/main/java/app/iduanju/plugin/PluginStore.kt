@@ -62,6 +62,17 @@ class PluginStore(private val ctx: Context) {
         live[id] = v; v
     }
 
+    /** Comic plugin as a manga provider (shares the QuickJS instance with [video]). */
+    fun comic(id: String): app.iduanju.core.plugin.PluginComic {
+        val v = video(id); val m = v.inst.bundle.manifest
+        return app.iduanju.core.plugin.PluginComic(v.inst, m.name, m.description ?: "JS 插件")
+    }
+    /** Media allow-list for idjimg:// refs (manifest media + http domains); null when the plugin is missing or disabled. */
+    fun mediaPolicy(id: String): app.iduanju.core.plugin.DomainPolicy? {
+        if (plugins.none { it.id == id && it.enabled }) return null
+        return runCatching { video(id).inst.bundle.manifest }.getOrNull()?.let { app.iduanju.core.plugin.DomainPolicy(it.mediaDomains + it.httpDomains) }
+    }
+
     /** iOS bundles adult comic plugins under 推荐插件 (never auto-installed). */
     fun bundled(): List<String> = runCatching { ctx.assets.list("plugins")?.filter { it.endsWith(".idjplugin") } ?: emptyList() }.getOrDefault(emptyList())
 
