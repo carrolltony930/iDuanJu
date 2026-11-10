@@ -65,6 +65,7 @@ fun RootScreen(initialRoute: String? = null) {
                     seriesId = e.arguments!!.getString("sid")!!,
                     startEp = e.arguments!!.getInt("ep"),
                     onBack = { nav.popBackStack() },
+                    onSwitchSeries = { sid -> nav.navigate("player/$sid/0") { popUpTo("player/{sid}/{ep}") { inclusive = true } } },
                 )
             }
         }

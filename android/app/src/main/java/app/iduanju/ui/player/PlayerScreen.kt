@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -51,7 +53,7 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
+fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit, onSwitchSeries: (String) -> Unit = {}) {
     val c = IdjThemeColors
     val ctx = LocalContext.current
     val lib = IdjApp.instance.library
@@ -323,13 +325,36 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
 
         if (showEpisodes) detail?.let { d ->
             ModalBottomSheet(onDismissRequest = { showEpisodes = false }, containerColor = c.surface) {
-                Text("选集 · 共${d.episodes.size}集", color = c.text, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp))
-                LazyVerticalGrid(GridCells.Fixed(6), Modifier.heightIn(max = 420.dp).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    itemsIndexed(d.episodes) { i, ep ->
+                // iOS EpisodePickerSheet: title + 更新至, season chips (newest first), 30-episode range chips, 6-column grid
+                val total = d.episodes.size
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("选集 · 共${maxOf(total, d.totalEps)}集", color = c.text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("更新至 ${d.episodes.lastOrNull()?.ep ?: total} 集", color = c.secondary, fontSize = 14.sp)
+                }
+                val seasons = remember(d.relatedSeries) {
+                    d.relatedSeries.map { it to app.iduanju.core.hongguo.SeasonParser.seasonNo(it.title) }.distinctBy { it.second }.sortedByDescending { it.second }
+                }
+                val chip: @Composable (String, Boolean, () -> Unit) -> Unit = { t, on, f ->
+                    Box(Modifier.clip(RoundedCornerShape(50)).background(if (on) c.text.copy(0.92f) else c.text.copy(0.08f)).clickable(onClick = f).padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text(t, color = if (on) c.surface else c.text, fontSize = 15.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
+                    }
+                }
+                if (seasons.size > 1) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    seasons.forEach { (s, n) -> chip("第${n}季", s.seriesId == d.seriesId) { if (s.seriesId != d.seriesId) { showEpisodes = false; onSwitchSeries(s.seriesId) } } }
+                }
+                var range by remember { mutableStateOf(epIndex / 30) }
+                if (total > 30) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    (0..(total - 1) / 30).forEach { r -> chip("${d.episodes[r * 30].ep}-${d.episodes[minOf(total - 1, r * 30 + 29)].ep}", r == range) { range = r } }
+                }
+                val slice = d.episodes.withIndex().toList().drop(range * 30).take(30)
+                LazyVerticalGrid(GridCells.Fixed(6), Modifier.heightIn(max = 420.dp).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(slice.size) { k ->
+                        val (i, ep) = slice[k]
                         val on = i == epIndex
-                        Box(Modifier.heightIn(min = 42.dp).clip(RoundedCornerShape(10.dp)).background(if (on) c.accent.copy(0.17f) else c.text.copy(0.07f))
+                        Box(Modifier.height(48.dp).clip(RoundedCornerShape(10.dp)).background(if (on) c.accent.copy(0.17f) else c.text.copy(0.07f))
+                            .then(if (on) Modifier.border(1.5.dp, c.accent.copy(0.8f), RoundedCornerShape(10.dp)) else Modifier)
                             .clickable { epIndex = i; showEpisodes = false }, contentAlignment = Alignment.Center) {
-                            Text("${ep.ep}", color = if (on) c.accent else c.text, fontWeight = FontWeight.SemiBold)
+                            Text("${ep.ep}", color = if (on) c.accent else c.text, fontSize = 17.sp)
                         }
                     }
                 }
