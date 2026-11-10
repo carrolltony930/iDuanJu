@@ -211,7 +211,7 @@ private fun PluginSection() {
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
     Text("插件（idj1）", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-    Text("粘贴 .idjplugin 的 https 链接或文件内容。插件运行在 QuickJS 沙箱里，只能访问 manifest 声明的域名；未成年相关内容一律过滤。",
+    Text("粘贴 .idjplugin / manifest / 订阅列表的 https 链接，或 .idjplugin 文件内容。插件运行在 QuickJS 沙箱里，只能访问 manifest 声明的域名；未成年相关内容一律过滤。",
         color = c.secondary, fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 6.dp, bottom = 8.dp))
     store.plugins.forEach { p ->
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
