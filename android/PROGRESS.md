@@ -1,6 +1,6 @@
 # Android 进度
 
-更新：2026-11-11 06:20（Asia/Shanghai）· 断点续做：先看「当前进行中」
+更新：2026-11-11 06:30（Asia/Shanghai）· 断点续做：先看「当前进行中」
 
 ## 当前进行中
 - 对比截图（shots/compare/，本地）：01 首页、02 频道面板、03 搜索、04 详情、05 播放器、06 选集面板、07 弹幕 已出（截图改用 `adb emu screenrecord screenshot`：视频 SurfaceView 在 TCG 下会让 `screencap` 返回旧帧）
@@ -55,7 +55,10 @@
 - 52a6ad4 低版本（API<31）封面模糊背景
 - 96c0088 弹幕去除 U+FFFC/BOM（安卓显示为 OBJ 方框）
 - 412e4ef 详情头图渐隐、简介字号对齐 iOS
-- 插件订阅、推荐插件、漫画插件上机自测（见 git log）
+- aae32a9 插件订阅；2924252 推荐插件（内置 .idjplugin）；9f9a55a 漫画插件上机自测
+- fa51aca 频道屏蔽规则 + 管理面板
+- 02a5cd8 / e392d50「我的」页对齐 iOS（成人开关入口、去广告、维护项）
+- ec39087 / 7b6e2a2 观看历史 / 我的收藏列表页
 
 ## APK（/workspace/iduanju-android/dist，SHA256 见 dist/SHA256SUMS）
 - 见文末「APK」节（每次构建后更新）
@@ -94,7 +97,7 @@
 - AVD idj30（API 30 x86_64，TCG，2 GB）。SystemUI 常 ANR，`adb root` 后杀掉 systemui 恢复。
 
 ## 测试（2026-11-11 05:20）
-- 汇总：core 14 个测试类 41 项，离线全过（13 项为在线用例，默认跳过）；05:20 复跑在线 HongguoLiveTest 3（无覆盖，one-shot）、HuangguoTest 5、MangaTest 3、TGParserTest 3：全过
+- 汇总（06:28）：core 16 个测试类 47 项，离线全过（13 项在线用例默认跳过）；`-Plive=1` 全量复跑：CENCLiveTest（one-shot，无覆盖）、HongguoLiveTest 3、HGDanmaku live、HuangguoTest 5、MangaTest 3、TGParserTest 3 全过；MacCMSLive / PluginHostLive 需运行时地址、SoftRejectProbe 需 -Pprobe（本轮跳过，03:00 已跑过）
 - 离线：HuangguoTest 4、MangaTest 2（iOS fixture）、TGParserTest 2（iOS fixture）、HGDanmakuTest、HGSignGolden 2、HLSAdFilter 10、Medusa 1、MacCMSTest 2、PluginHostTest 4（manifest/域名策略/crypto/html/m3u8/unpack/storage/重定向拦截/限流；3 个内置 iOS 插件均可解析）：全部 PASS
 - 在线（-Plive / -PcmsApi，地址只在运行时传入）：HongguoLiveTest 3、HGDanmaku live（126 条）、TG live（20 帖）、黄果 live（三子源）、漫画 live（包子/MangaDex）、CENCLiveTest（route=oneshot）、MacCMSLiveTest、PluginHostLiveTest：PASS
 - 模拟器（AVD idj30，API 30 x86_64，TCG，经宿主代理）：
@@ -117,10 +120,10 @@
 - 插件执行超时中断、签名校验
 
 ## APK
-构建于 e8a82c9（2026-11-11 05:20；含频道面板、选集面板、解码回退、漫画插件；release 用 Android Debug 证书签名；未混淆）
+构建于 7b6e2a2（2026-11-11 06:26；release 用 Android Debug 证书签名；未混淆）
 ```
-iDuanJu-1.5.2-android-debug.apk 28633095
-iDuanJu-1.5.2-android-release.apk 20579127
-218945c4aeb03a1fea58d27295c760f8189740bd26c7a4927e92ddf968f1658b  iDuanJu-1.5.2-android-debug.apk
-e0da4899260e1c1af4afa179d92bf9c7b13e2784984f2ae52fcc65312d361004  iDuanJu-1.5.2-android-release.apk
+iDuanJu-1.5.2-android-debug.apk 28633335
+iDuanJu-1.5.2-android-release.apk 20654239
+bdf0012d40d6fe2a37451996925e14dbd9a36973df18704bc525aaca006283df  iDuanJu-1.5.2-android-debug.apk
+9eefe9ace14117e473e993678dea20a7f58ae31c52d09c54b71a30dd623fc027  iDuanJu-1.5.2-android-release.apk
 ```
