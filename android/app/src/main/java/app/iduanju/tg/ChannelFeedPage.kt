@@ -122,7 +122,7 @@ private fun EmptySubs(store: TGStore, adult: Boolean, onAdded: () -> Unit) {
                 BasicTextField(text, { text = it; bad = false }, singleLine = true, textStyle = TextStyle(color = c.text, fontSize = 15.sp), cursorBrush = SolidColor(c.accent), modifier = Modifier.fillMaxWidth())
             }
             Spacer(Modifier.width(8.dp))
-            Button({ if (store.add(text) != null) { text = ""; onAdded() } else bad = true }, colors = ButtonDefaults.buttonColors(containerColor = c.accent)) { Text("订阅") }
+            Button({ if (store.add(text) != null) { text = ""; onAdded() } else bad = true }, colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White)) { Text("订阅", fontWeight = FontWeight.SemiBold) }
         }
         if (bad) Text("无效的频道名", color = c.accentWarm, fontSize = 12.sp)
     }
@@ -138,6 +138,18 @@ private fun fmtDate(sec: Long): String {
             SimpleDateFormat(if (sameYear) "M月d日 HH:mm" else "yyyy年M月d日", Locale.CHINA).format(Date(sec * 1000))
         }
     }
+}
+
+private val URL_RE = Regex("https?://[^\\s]+")
+/** iOS NSDataDetector links: tappable URLs in post text. */
+private fun linkify(t: String, accent: Color) = androidx.compose.ui.text.buildAnnotatedString {
+    var i = 0
+    for (m in URL_RE.findAll(t)) {
+        append(t.substring(i, m.range.first))
+        pushLink(androidx.compose.ui.text.LinkAnnotation.Url(m.value, androidx.compose.ui.text.TextLinkStyles(androidx.compose.ui.text.SpanStyle(color = accent)))); append(m.value); pop()
+        i = m.range.last + 1
+    }
+    append(t.substring(i))
 }
 
 private fun clock(s: Int) = if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
@@ -161,7 +173,7 @@ private fun PostCard(p: TGPost, ch: TGChannel?, open: (String) -> Unit, onMedia:
             }
             if (p.forwardedFrom.isNotEmpty()) Text("转发自 ${p.forwardedFrom}", color = c.secondary, fontSize = 12.sp)
             if (p.text.isNotEmpty()) {
-                Text(p.text, color = c.text, fontSize = 17.sp, lineHeight = 22.sp, maxLines = if (expanded) Int.MAX_VALUE else 8, overflow = TextOverflow.Ellipsis)
+                Text(linkify(p.text, c.accent), color = c.text, fontSize = 17.sp, lineHeight = 22.sp, maxLines = if (expanded) Int.MAX_VALUE else 8, overflow = TextOverflow.Ellipsis)
                 if (!expanded && (p.text.length > 260 || p.text.count { it == '\n' } > 7)) Text("全文", color = c.accent, fontSize = 15.sp, modifier = Modifier.clickable { expanded = true })
             }
             if (p.media.isNotEmpty()) MediaGrid(p, onMedia)
@@ -170,8 +182,8 @@ private fun PostCard(p: TGPost, ch: TGChannel?, open: (String) -> Unit, onMedia:
                     Box(Modifier.width(3.dp).fillMaxHeight().background(c.accent)); Spacer(Modifier.width(8.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         if (lp.site.isNotEmpty()) Text(lp.site, color = c.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        if (lp.title.isNotEmpty()) Text(lp.title, color = c.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
-                        if (lp.desc.isNotEmpty()) Text(lp.desc, color = c.secondary, fontSize = 12.sp, maxLines = 3)
+                        if (lp.title.isNotEmpty()) Text(lp.title, color = c.text, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (lp.desc.isNotEmpty()) Text(lp.desc, color = c.secondary, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     }
                     if (lp.image.isNotEmpty()) AsyncImage(lp.image, null, Modifier.padding(start = 8.dp).size(54.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
                 }

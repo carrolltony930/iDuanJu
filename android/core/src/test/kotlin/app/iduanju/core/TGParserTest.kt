@@ -39,6 +39,7 @@ class TGParserTest {
         assumeTrue(System.getProperty("idj.live") == "1")
         val p = TGClient().page("telegram")
         println("tg live posts=${p.posts.size} title=${p.info?.title} videos=${p.posts.sumOf { it.media.count { m -> m.video != null } }}")
+        p.posts.take(6).forEach { println("tg post ${it.msgId} " + it.media.joinToString { m -> "${m.kind} thumb=${m.thumb.take(40)} v=${m.video?.take(40)}" }) }
         assertTrue(p.posts.isNotEmpty())
     }
 }
