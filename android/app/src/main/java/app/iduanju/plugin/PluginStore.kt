@@ -113,7 +113,10 @@ class PluginStore(private val ctx: Context) {
     }
 
     /** iOS bundles adult comic plugins under 推荐插件 (never auto-installed). */
-    fun bundled(): List<String> = runCatching { ctx.assets.list("plugins")?.filter { it.endsWith(".idjplugin") } ?: emptyList() }.getOrDefault(emptyList())
+    fun bundled(): List<String> = runCatching { ctx.assets.list("plugins")?.filter { it.endsWith(".idjplugin") }?.sorted() ?: emptyList() }.getOrDefault(emptyList())
+    fun bundledText(name: String): String = ctx.assets.open("plugins/$name").use { it.readBytes().toString(Charsets.UTF_8) }
+    /** (file, manifest) for 推荐插件; unparsable files are skipped. */
+    fun bundledManifests(): List<Pair<String, PluginManifest>> = bundled().mapNotNull { f -> runCatching { f to PluginBundle.parse(bundledText(f)).manifest }.getOrNull() }
 
     companion object {
         const val KEY = "stv.plugins.index"

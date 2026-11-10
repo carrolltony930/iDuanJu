@@ -64,6 +64,7 @@ fun ProfileScreen() {
         Spacer(Modifier.height(20.dp))
         PluginSection()
         SubscriptionSection()
+        BundledSection()
         Spacer(Modifier.height(24.dp))
         Text("开源许可", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
         Text("GPL-3.0 · Media3 / OkHttp / Coil / Kotlin", color = c.secondary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
@@ -111,6 +112,40 @@ private fun CMSSection() {
         }
     }) { Text(if (busy) "校验中…" else "添加") }
     msg?.let { Text(it, color = c.secondary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
+}
+
+/** iOS 推荐插件（App 内置）: offered, never auto-installed; adult ones only behind the gate. */
+@Composable
+private fun BundledSection() {
+    val c = IdjThemeColors
+    val ia = IdjApp.instance
+    val store = ia.plugins
+    val all = remember { store.bundledManifests() }
+    if (all.isEmpty()) return
+    val list = all.filter { !it.second.adult || ia.cms.adultUnlocked }
+    val scope = rememberCoroutineScope()
+    var msg by remember { mutableStateOf<String?>(null) }
+    if (list.isEmpty()) {
+        Text("App 内置了 ${all.size} 个漫画插件（成人内容），打开成人开关后才会显示在这里。", color = c.secondary, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
+        return
+    }
+    Text("推荐插件（App 内置）", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.padding(top = 12.dp))
+    list.forEach { (file, m) ->
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(m.name + if (m.adult) " · 18+" else "", color = c.text, fontSize = 14.sp)
+                Text(m.description ?: "", color = c.secondary, fontSize = 11.sp, maxLines = 2)
+            }
+            val inst = store.plugins.firstOrNull { it.id == m.id }
+            val newer = inst != null && app.iduanju.core.plugin.PluginManifest.compare(m.version, inst.version) > 0
+            if (inst != null && !newer) Text("已安装", color = c.secondary, fontSize = 12.sp)
+            else TextButton(onClick = { scope.launch {
+                msg = try { val r = withContext(Dispatchers.IO) { store.install(store.bundledText(file), "内置") }; "已安装「${r.name}」${r.version}" }
+                      catch (x: app.iduanju.core.plugin.PluginException) { x.friendly } catch (x: Exception) { x.message ?: "安装失败" }
+            } }) { Text(if (newer) "更新" else "安装") }
+        }
+    }
+    msg?.let { Text(it, color = c.secondary, fontSize = 12.sp) }
 }
 
 /** iOS PluginViews.subscriptionBlock: list entries, install on demand (never auto-install), add 采集站. */

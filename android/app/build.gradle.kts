@@ -25,7 +25,14 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    // 推荐插件: the same .idjplugin bundles the iOS app ships (STV/Resources/Plugins), copied at build time
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/idj-assets"))
 }
+val copyBundledPlugins by tasks.registering(Sync::class) {
+    from(rootProject.file("../STV/Resources/Plugins")) { include("*.idjplugin") }
+    into(layout.buildDirectory.dir("generated/idj-assets/plugins"))
+}
+tasks.named("preBuild") { dependsOn(copyBundledPlugins) }
 dependencies {
     implementation(project(":core"))
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
