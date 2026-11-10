@@ -51,6 +51,7 @@ class LibraryStore(ctx: Context) {
         save()
     }
     fun clearHistory() { history.clear(); save() }
+    fun removeProgress(sid: String) { history.removeAll { it.seriesId == sid }; save() }
     fun isFavorite(sid: String) = favorites.containsKey(sid)
     fun toggleFavorite(sid: String, title: String, cover: String) {
         if (favorites.remove(sid) == null) favorites[sid] = Triple(title, cover, System.currentTimeMillis())

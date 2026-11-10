@@ -87,6 +87,7 @@ private fun ProfileTop(onOpenDetail: (String) -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var confirmAdult by remember { mutableStateOf(false) }
     var adStrip by remember { mutableStateOf(app.iduanju.core.hls.HLSAdFilter.enabled) }
+    val go = app.iduanju.ui.LocalNavigate.current
     Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
         if (lib.history.isNotEmpty()) Box(Modifier.layout { m, cons ->
             // bleed to the screen edges like iOS (the row has its own 16dp inset; this column has 20dp)
@@ -96,7 +97,7 @@ private fun ProfileTop(onOpenDetail: (String) -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("我的收藏", color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text("全部 ${lib.favorites.size}", color = c.secondary, fontSize = 15.sp)
+                Text("全部 ${lib.favorites.size}", color = c.secondary, fontSize = 15.sp, modifier = Modifier.clickable { go("library/favorites") })
             }
             val favs = lib.favorites.entries.sortedByDescending { it.value.third }.take(6)
             if (favs.isEmpty()) Text("在播放页右侧点 ♥ 收藏", color = c.secondary, fontSize = 14.sp)

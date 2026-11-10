@@ -496,7 +496,8 @@ internal fun ContinueRow(items: List<app.iduanju.data.WatchProgress>, onOpen: (S
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("继续观看", color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            Text("全部", color = c.secondary, fontSize = 15.sp)
+            val go = app.iduanju.ui.LocalNavigate.current
+            Text("全部", color = c.secondary, fontSize = 15.sp, modifier = Modifier.clickable { go("library/history") })
         }
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(items.take(10).size) { i ->

@@ -26,6 +26,9 @@ import app.iduanju.ui.profile.ProfileScreen
 import app.iduanju.ui.search.SearchScreen
 import app.iduanju.ui.theme.IdjThemeColors
 
+/** Lets deep rows (继续观看 · 全部) open a route without threading callbacks through every page. */
+val LocalNavigate = androidx.compose.runtime.staticCompositionLocalOf<(String) -> Unit> { {} }
+
 @Composable
 fun RootScreen(initialRoute: String? = null) {
     val nav = rememberNavController()
@@ -36,10 +39,12 @@ fun RootScreen(initialRoute: String? = null) {
     val atRoot = route in setOf("home", "search", "category", "profile")
 
     Box(Modifier.fillMaxSize()) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalNavigate provides { r: String -> nav.navigate(r) }) {
         NavHost(nav, startDestination = "home", modifier = Modifier.fillMaxSize()) {
             composable("home") { HomeScreen(onOpenDetail = { nav.navigate("detail/$it") }, onSearch = { nav.navigate("search") }, onPlay = { nav.navigate("player/$it/0") }, onOpenManga = { nav.navigate("manga/" + android.net.Uri.encode(it)) }) }
             composable("search") { SearchScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
             composable("category") { CategoryScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
+            composable("library/{kind}") { e -> app.iduanju.ui.library.LibraryListScreen(e.arguments!!.getString("kind")!!, onBack = { nav.popBackStack() }, onOpenDetail = { nav.navigate("detail/$it") }) }
             composable("profile") { ProfileScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
             composable("detail/{sid}", arguments = listOf(navArgument("sid") { type = NavType.StringType })) { e ->
                 val sid = e.arguments!!.getString("sid")!!
@@ -70,6 +75,7 @@ fun RootScreen(initialRoute: String? = null) {
             }
         }
 
+        }
         if (atRoot) {
             GlassTabBar(
                 selected = tab,
