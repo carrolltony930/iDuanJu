@@ -1,6 +1,6 @@
 # Android 进度
 
-更新：2026-11-11 05:15（Asia/Shanghai）· 断点续做：先看「当前进行中」
+更新：2026-11-11 05:25（Asia/Shanghai）· 断点续做：先看「当前进行中」
 
 ## 当前进行中
 - 对比截图（shots/compare/，本地）：01 首页、02 频道面板、03 搜索、04 详情、05 播放器、06 选集面板、07 弹幕 已出（截图改用 `adb emu screenrecord screenshot`：视频 SurfaceView 在 TCG 下会让 `screencap` 返回旧帧）
@@ -46,6 +46,9 @@
 - abad6c7 搜索多源 + PROGRESS
 - 0fe4331 漫画插件 + idjimg:// 图片抓取
 - e4ae037 首页「频道」面板
+- 6a5fd77 PROGRESS
+- d7b67c8 选集面板（季/区间/更新至）
+- e8a82c9 解码能力回退
 
 ## APK（/workspace/iduanju-android/dist，SHA256 见 dist/SHA256SUMS）
 - 见文末「APK」节（每次构建后更新）
@@ -83,7 +86,8 @@
 - 播放器会话按 iOS 绕过代理（NO_PROXY），为模拟器加开发开关 `dev.playerSystemProxy`（E2E：`--es proxy 1`），默认关闭。
 - AVD idj30（API 30 x86_64，TCG，2 GB）。SystemUI 常 ANR，`adb root` 后杀掉 systemui 恢复。
 
-## 测试（2026-11-11 04:50）
+## 测试（2026-11-11 05:20）
+- 汇总：core 14 个测试类 41 项，离线全过（13 项为在线用例，默认跳过）；05:20 复跑在线 HongguoLiveTest 3（无覆盖，one-shot）、HuangguoTest 5、MangaTest 3、TGParserTest 3：全过
 - 离线：HuangguoTest 4、MangaTest 2（iOS fixture）、TGParserTest 2（iOS fixture）、HGDanmakuTest、HGSignGolden 2、HLSAdFilter 10、Medusa 1、MacCMSTest 2、PluginHostTest 4（manifest/域名策略/crypto/html/m3u8/unpack/storage/重定向拦截/限流；3 个内置 iOS 插件均可解析）：全部 PASS
 - 在线（-Plive / -PcmsApi，地址只在运行时传入）：HongguoLiveTest 3、HGDanmaku live（126 条）、TG live（20 帖）、黄果 live（三子源）、漫画 live（包子/MangaDex）、CENCLiveTest（route=oneshot）、MacCMSLiveTest、PluginHostLiveTest：PASS
 - 模拟器（AVD idj30，API 30 x86_64，TCG，经宿主代理）：
@@ -106,10 +110,10 @@
 - 插件订阅/推荐插件、执行超时中断
 
 ## APK
-构建于 e4ae037（2026-11-11 04:48；含频道面板、漫画插件；release 用 Android Debug 证书签名；未混淆）
+构建于 e8a82c9（2026-11-11 05:20；含频道面板、选集面板、解码回退、漫画插件；release 用 Android Debug 证书签名；未混淆）
 ```
 iDuanJu-1.5.2-android-debug.apk 28633095
-iDuanJu-1.5.2-android-release.apk 20562743
-eab83394071d0e681935e0ca818efc2f526c95d957cfb0b087dee9d089179550  iDuanJu-1.5.2-android-debug.apk
-45c75dd2e0d23b4878ac6732f80a8acfbdfc9bb0f090069ad766668d7c366a6e  iDuanJu-1.5.2-android-release.apk
+iDuanJu-1.5.2-android-release.apk 20579127
+218945c4aeb03a1fea58d27295c760f8189740bd26c7a4927e92ddf968f1658b  iDuanJu-1.5.2-android-debug.apk
+e0da4899260e1c1af4afa179d92bf9c7b13e2784984f2ae52fcc65312d361004  iDuanJu-1.5.2-android-release.apk
 ```
