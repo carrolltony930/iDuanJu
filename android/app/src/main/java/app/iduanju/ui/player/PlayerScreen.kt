@@ -76,7 +76,11 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
     var retry by remember { mutableIntStateOf(0) }
 
     val player = remember {
-        ExoPlayer.Builder(ctx).build().also { it.playWhenReady = true }
+        ExoPlayer.Builder(ctx).setMediaSourceFactory(
+            androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                androidx.media3.datasource.DefaultDataSource.Factory(ctx,
+                    androidx.media3.datasource.DefaultHttpDataSource.Factory().setUserAgent(app.iduanju.core.cms.MacCMS.UA).setAllowCrossProtocolRedirects(true)))
+        ).build().also { it.playWhenReady = true }
     }
     DisposableEffect(Unit) {
         val l = object : Player.Listener {
@@ -100,7 +104,7 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
 
     LaunchedEffect(seriesId) {
         try {
-            val d = withContext(Dispatchers.IO) { IdjApp.instance.hongguo.detail(seriesId, web = false) }
+            val d = withContext(Dispatchers.IO) { app.iduanju.data.Catalog.detail(seriesId, web = false) }
             detail = d
             epIndex = d.episodes.indexOfFirst { it.ep == startEp }.coerceAtLeast(0)
         } catch (e: Exception) { error = e.message ?: "详情失败"; status = "" }
@@ -112,17 +116,21 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
         error = null; status = "取流中…"
         player.stop(); player.clearMediaItems()
         try {
-            val p = EpisodeCache.get(ep.vid) { status = it }.await()
+            val p = EpisodeCache.get(ep) { status = it }.await()
             quality = p.quality
             status = ""
-            player.setMediaItem(MediaItem.fromUri(p.uri))
+            player.setMediaItem(
+                MediaItem.Builder().setUri(if (p.uri.startsWith("/")) android.net.Uri.fromFile(java.io.File(p.uri)) else android.net.Uri.parse(p.uri))
+                    .apply { if (p.hls) setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8) }.build()
+            )
+            p.note?.let { android.util.Log.i("IDJ", "hls: $it") }
             player.setPlaybackSpeed(speed)
             val resume = lib.progress(seriesId)
             if (resume != null && resume.episodeIndex == epIndex && resume.seconds > 3 && resume.fraction < 0.95f) player.seekTo((resume.seconds * 1000).toLong())
             player.prepare(); player.play()
             // precache next episode (iOS preloads the next stream while this one plays)
             // spaced ≥6 s from the current resolve: fresh one-shot registrations back-to-back get soft-rejected (probe 2026-11-11)
-            d.episodes.getOrNull(epIndex + 1)?.let { delay(6_000); EpisodeCache.preload(it.vid) }
+            d.episodes.getOrNull(epIndex + 1)?.let { delay(6_000); EpisodeCache.preload(it) }
         } catch (e: Exception) {
             status = ""; error = e.message ?: "播放失败"
         }

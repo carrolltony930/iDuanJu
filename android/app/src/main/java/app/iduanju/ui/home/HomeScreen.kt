@@ -116,12 +116,16 @@ fun formatCount(n: Long) = HomeFmt.count(n)
 @Composable
 fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}) {
     val c = IdjThemeColors
-    val sources = HomeSource.entries
-    val pager = rememberPagerState { sources.size }
+    // iOS HomeSource.all: [红果, 黄果, AI剧] + visible sites (采集站 / plugins) + [频道, 漫画]
+    val sites = IdjApp.instance.cms.visibleSites
+    val pages: List<Any> = listOf<Any>(HomeSource.hongguo, HomeSource.huangguo, HomeSource.ai) + sites + listOf(HomeSource.channels, HomeSource.manga)
+    val labels = pages.map { (it as? HomeSource)?.label ?: (it as app.iduanju.core.cms.CMSSite).name }
+    val pager = rememberPagerState { pages.size }
     val scope = rememberCoroutineScope()
-    val heroCovers = remember { mutableStateMapOf<HomeSource, String>() }
-    val source = sources[pager.currentPage]
-    val onPoster = heroCovers[source] != null
+    val heroCovers = remember { mutableStateMapOf<String, String>() }
+    val source = pages[pager.currentPage.coerceIn(0, pages.size - 1)]
+    val sourceKey = labels[pager.currentPage.coerceIn(0, pages.size - 1)]
+    val onPoster = heroCovers[sourceKey] != null
     val ink = if (onPoster) Color.White else c.text
 
     Box(Modifier.fillMaxSize().background(c.bg)) {
@@ -136,7 +140,7 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}) {
         ) {
             if (onPoster) {
                 Box(Modifier.fillMaxSize().background(Color(0xFF141A26)))
-                AsyncImage(heroCovers[source], null, Modifier.fillMaxSize().blur(48.dp), contentScale = ContentScale.Crop, alpha = 0.75f)
+                AsyncImage(heroCovers[sourceKey], null, Modifier.fillMaxSize().blur(48.dp), contentScale = ContentScale.Crop, alpha = 0.75f)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, c.bg.copy(0.35f), c.bg))))
             } else {
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(c.elevated, c.bg))))
@@ -164,16 +168,18 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}) {
                     }
                 }
                 Spacer(Modifier.height(2.dp))
-                ChannelBar(sources.map { it.label }, pager.currentPage, ink) { scope.launch { pager.animateScrollToPage(it) } }
+                ChannelBar(labels, pager.currentPage, ink) { scope.launch { pager.animateScrollToPage(it) } }
             }
             HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 0) { page ->
-                val s = sources[page]
+                val any = pages[page]
+                if (any is app.iduanju.core.cms.CMSSite) { SiteFeedPage(any, onOpenDetail); return@HorizontalPager }
+                val s = any as HomeSource
                 if (s.subs().isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("「${s.label}」Android 版尚未移植", color = c.secondary, fontSize = 14.sp)
                     }
                 } else {
-                    FeedPage(s, onOpenDetail) { cover -> if (cover == null) heroCovers.remove(s) else heroCovers[s] = cover }
+                    FeedPage(s, onOpenDetail) { cover -> if (cover == null) heroCovers.remove(s.label) else heroCovers[s.label] = cover }
                 }
             }
         }

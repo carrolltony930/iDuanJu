@@ -17,7 +17,7 @@ data class HGSeries(
     var rank: Int = 0,
 )
 
-data class HGEpisode(val ep: Int, val vid: String, val duration: Int = 0, val title: String = "")
+data class HGEpisode(val ep: Int, val vid: String, val duration: Int = 0, val title: String = "", val page: String? = null, val media: String? = null)
 
 data class HGCelebrity(val id: String = "", val name: String = "", val avatar: String = "", val role: String = "", val intro: String = "")
 
@@ -55,7 +55,7 @@ data class HGStreamAudio(
     val channels: Int = 0, val sampleRate: Int = 0, val bitrate: Int = 0,
 )
 
-enum class HGStreamKind { mp4Clear, mp4Cenc }
+enum class HGStreamKind { mp4Clear, mp4Cenc, hls }
 
 data class HGStream(
     val streamId: String,
@@ -70,6 +70,7 @@ data class HGStream(
     val audio: HGStreamAudio? = null,
     val kind: HGStreamKind = HGStreamKind.mp4Clear,
     val backupURL: String? = null,
+    val headers: Map<String, String> = emptyMap(),
 ) {
     val id: String get() = streamId
 }

@@ -59,5 +59,6 @@ class ProviderException(message: String) : Exception(message) {
     companion object {
         fun upstream(m: String) = ProviderException("上游错误：$m")
         fun invalid(m: String) = ProviderException("参数错误：$m")
+        fun unsupported(m: String) = ProviderException(m)
     }
 }

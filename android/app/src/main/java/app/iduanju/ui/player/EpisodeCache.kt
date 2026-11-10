@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /** A ready-to-play episode: local decrypted file (CENC) or a direct URL. */
-data class Playable(val uri: String, val quality: String?, val codec: String, val encrypted: Boolean)
+data class Playable(val uri: String, val quality: String?, val codec: String, val encrypted: Boolean, val hls: Boolean = false, val headers: Map<String, String> = emptyMap(), val note: String? = null)
 
 /**
  * Resolve + (for CENC) download & decrypt to cache. Also used to precache the next episode
@@ -31,17 +31,35 @@ object EpisodeCache {
 
     private fun dir(): File = File(IdjApp.instance.cacheDir, "hg-play").apply { mkdirs() }
 
-    fun get(vid: String, onStatus: (String) -> Unit = {}): Deferred<Playable> =
-        inflight[vid]?.takeIf { !it.isCancelled && !(it.isCompleted && it.getCompletionExceptionOrNull() != null) }
-            ?: scope.async { load(vid, onStatus) }.also { inflight[vid] = it }
+    fun get(vid: String, onStatus: (String) -> Unit = {}): Deferred<Playable> = get(app.iduanju.core.hongguo.HGEpisode(0, vid), onStatus)
 
-    fun preload(vid: String) { get(vid) }
+    fun get(ep: app.iduanju.core.hongguo.HGEpisode, onStatus: (String) -> Unit = {}): Deferred<Playable> =
+        inflight[ep.vid]?.takeIf { !it.isCancelled && !(it.isCompleted && it.getCompletionExceptionOrNull() != null) }
+            ?: scope.async { load(ep, onStatus) }.also { inflight[ep.vid] = it }
 
-    private fun load(vid: String, onStatus: (String) -> Unit): Playable {
-        val r = IdjApp.instance.hongguo.resolve(vid)
+    fun preload(ep: app.iduanju.core.hongguo.HGEpisode) { get(ep) }
+
+    private fun safeName(vid: String) = vid.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+    private fun load(ep: app.iduanju.core.hongguo.HGEpisode, onStatus: (String) -> Unit): Playable {
+        val vid = ep.vid
+        val r = app.iduanju.data.Catalog.resolve(ep)
         val s = r.streams.firstOrNull() ?: throw Exception(r.err ?: "无可用流")
-        if (s.key.isEmpty()) return Playable(s.url, s.quality, s.codec, false)
-        val f = File(dir(), "$vid.mp4")
+        if (s.kind == app.iduanju.core.hongguo.HGStreamKind.hls) {
+            // iOS serves the ad-stripped playlist from its loopback proxy; here it is written to a local file.
+            onStatus("解析播放列表…")
+            val prep = app.iduanju.core.hls.HLSLocal.prepare(s.url) { u ->
+                http.newCall(Request.Builder().url(u).apply { s.headers.forEach { (k, v) -> header(k, v) } }.build()).execute().use { resp ->
+                    if (!resp.isSuccessful) throw Exception("播放列表 HTTP ${resp.code}")
+                    resp.body!!.string()
+                }
+            }
+            val f = File(dir(), safeName(vid) + ".m3u8"); f.writeText(prep.text)
+            val note = if (prep.removed > 0) "已去广告 ${prep.removed} 段 · ${prep.removedSeconds.toInt()}s" else null
+            return Playable(f.absolutePath, s.quality, s.codec, false, hls = true, headers = s.headers, note = note)
+        }
+        if (s.key.isEmpty()) return Playable(s.url, s.quality, s.codec, false, headers = s.headers)
+        val f = File(dir(), "${safeName(vid)}.mp4")
         if (f.length() > 0) return Playable(f.absolutePath, s.quality, s.codec, true)
         onStatus("下载解密…")
         val enc = http.newCall(Request.Builder().url(s.url).header("User-Agent", "com.phoenix.read/73932").build()).execute().use { resp ->
@@ -50,7 +68,7 @@ object EpisodeCache {
         }
         if (enc.isEmpty()) throw Exception("媒体空包")
         val dec = CENCDecryptor.decryptCopy(enc, s.key)
-        val tmp = File(dir(), "$vid.part"); tmp.writeBytes(dec); tmp.renameTo(f)
+        val tmp = File(dir(), "${safeName(vid)}.part"); tmp.writeBytes(dec); tmp.renameTo(f)
         trim()
         return Playable(f.absolutePath, s.quality, s.codec, true)
     }

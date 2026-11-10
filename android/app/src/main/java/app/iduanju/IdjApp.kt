@@ -13,6 +13,8 @@ class IdjApp : Application() {
         private set
     lateinit var library: LibraryStore
         private set
+    lateinit var cms: app.iduanju.data.CMSStore
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -25,6 +27,8 @@ class IdjApp : Application() {
         }
         hongguo = HongguoClient(filesDir)
         library = LibraryStore(this)
+        cms = app.iduanju.data.CMSStore(this)
+        app.iduanju.core.hls.HLSAdFilter.enabled = settings.adStripEnabled
     }
 
     companion object {
