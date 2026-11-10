@@ -31,6 +31,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -99,7 +101,7 @@ fun SearchScreen(onOpenDetail: (String) -> Unit) {
                 Icon(Icons.Filled.Search, null, tint = c.secondary, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Box(Modifier.weight(1f)) {
-                    if (query.isEmpty()) Text("搜索剧名、演员", color = c.secondary, fontSize = 15.sp)
+                    if (query.isEmpty()) Text("搜索短剧 / 演员", color = c.secondary, fontSize = 15.sp)
                     BasicTextField(query, { query = it }, singleLine = true, textStyle = TextStyle(color = c.text, fontSize = 15.sp),
                         cursorBrush = SolidColor(c.accent), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { submit() }), modifier = Modifier.fillMaxWidth())
@@ -123,7 +125,8 @@ fun SearchScreen(onOpenDetail: (String) -> Unit) {
                                 Spacer(Modifier.width(16.dp)); Text("完成", color = c.text, fontSize = 15.sp, modifier = Modifier.clickable { editing = false })
                             } else Icon(Icons.Filled.Delete, "编辑", tint = c.secondary, modifier = Modifier.size(20.dp).clickable { editing = true })
                         }
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // iOS ChipFlow: one horizontally scrolling row
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             lib.searchHistory.forEach { t -> Chip(t, null, editing) { if (editing) lib.removeSearch(t) else submit(t) } }
                         }
                     }
@@ -135,7 +138,7 @@ fun SearchScreen(onOpenDetail: (String) -> Unit) {
                             Text("搜索发现", color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.weight(1f))
                             Icon(Icons.Filled.Refresh, "换一批", tint = c.secondary, modifier = Modifier.size(20.dp).clickable { seed++ })
                         }
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             discover.forEachIndexed { i, t -> Chip(t, if (i == 0) "热" else if (i == 1) "荐" else null, false) { submit(t) } }
                         }
                     }
@@ -183,7 +186,7 @@ private fun Chip(t: String, accent: String?, removable: Boolean, onClick: () -> 
     Row(Modifier.clip(RoundedCornerShape(50)).background(c.text.copy(0.09f)).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Text(t, color = c.text, fontSize = 15.sp, maxLines = 1)
-        if (accent != null) Text("·$accent", color = c.accentWarm, fontSize = 15.sp)
+        if (accent != null) Text(" ·$accent", color = c.accentWarm, fontSize = 15.sp)
         if (removable) { Spacer(Modifier.width(4.dp)); Icon(Icons.Filled.Cancel, null, tint = c.secondary, modifier = Modifier.size(13.dp)) }
     }
 }
