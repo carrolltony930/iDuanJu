@@ -60,6 +60,8 @@ fun ProfileScreen() {
         }
         Spacer(Modifier.height(24.dp))
         CMSSection()
+        Spacer(Modifier.height(20.dp))
+        PluginSection()
         Spacer(Modifier.height(24.dp))
         Text("开源许可", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
         Text("GPL-3.0 · Media3 / OkHttp / Coil / Kotlin", color = c.secondary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
@@ -106,5 +108,46 @@ private fun CMSSection() {
             busy = false
         }
     }) { Text(if (busy) "校验中…" else "添加") }
+    msg?.let { Text(it, color = c.secondary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
+}
+
+/** iOS 插件 (idj1): install from an https .idjplugin URL or a pasted bundle; QuickJS sandbox, domain allow-list. */
+@Composable
+private fun PluginSection() {
+    val c = IdjThemeColors
+    val store = IdjApp.instance.plugins
+    val scope = rememberCoroutineScope()
+    var input by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf<String?>(null) }
+    Text("插件（idj1）", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    Text("粘贴 .idjplugin 的 https 链接或文件内容。插件运行在 QuickJS 沙箱里，只能访问 manifest 声明的域名；未成年相关内容一律过滤。",
+        color = c.secondary, fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 6.dp, bottom = 8.dp))
+    store.plugins.forEach { p ->
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(p.name + if (p.adult) " · 成人" else "", color = c.text, fontSize = 14.sp)
+                Text("${p.id} · ${p.version} · ${when (p.type) { "video" -> "长视频"; "shortdrama" -> "短剧"; "comic" -> "漫画"; "live" -> "直播"; else -> p.type }}", color = c.secondary, fontSize = 11.sp)
+            }
+            Switch(p.enabled, { store.setEnabled(p.id, it) })
+            TextButton(onClick = { store.remove(p.id) }) { Text("删除") }
+        }
+    }
+    OutlinedTextField(input, { input = it }, label = { Text("https://….idjplugin 或 {\"manifest\":…}") }, modifier = Modifier.fillMaxWidth(), maxLines = 4,
+        colors = TextFieldDefaults.colors(focusedContainerColor = c.surface, unfocusedContainerColor = c.surface))
+    Button(enabled = !busy && input.isNotBlank(), onClick = {
+        busy = true; msg = null
+        scope.launch {
+            msg = try {
+                val r = withContext(Dispatchers.IO) {
+                    val t = input.trim()
+                    val text = if (t.startsWith("https://")) app.iduanju.plugin.PluginStore.download(t) else t
+                    store.install(text, if (t.startsWith("https://")) t else "paste")
+                }
+                input = ""; "已安装「${r.name}」${r.version}" + if (r.type == "comic") "（漫画插件：阅读器移植中）" else ""
+            } catch (e: app.iduanju.core.plugin.PluginException) { e.friendly } catch (e: Exception) { e.message ?: "安装失败" }
+            busy = false
+        }
+    }) { Text(if (busy) "校验中…" else "安装") }
     msg?.let { Text(it, color = c.secondary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
 }

@@ -65,5 +65,21 @@ class PluginStore(private val ctx: Context) {
     /** iOS bundles adult comic plugins under 推荐插件 (never auto-installed). */
     fun bundled(): List<String> = runCatching { ctx.assets.list("plugins")?.filter { it.endsWith(".idjplugin") } ?: emptyList() }.getOrDefault(emptyList())
 
-    companion object { const val KEY = "stv.plugins.index" }
+    companion object {
+        const val KEY = "stv.plugins.index"
+        private val http = okhttp3.OkHttpClient.Builder().callTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
+
+        /** https only, never to a private/loopback address, ≤2 MB. */
+        fun download(url: String): String {
+            val u = java.net.URI(url)
+            if (u.scheme != "https" || u.host == null) throw PluginException("E_INSTALL", "只支持 https 链接")
+            if (app.iduanju.core.util.NetGuard.isIPLiteral(u.host) || app.iduanju.core.util.NetGuard.resolvesToBlocked(u.host)) throw PluginException("E_INSTALL", "地址指向本机/内网，已拦截")
+            http.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { r ->
+                if (!r.isSuccessful) throw PluginException("E_INSTALL", "下载失败 HTTP ${r.code}")
+                val b = r.body?.byteStream()?.use { PluginHost.readCapped(it, (2 shl 20) + 1) } ?: ByteArray(0)
+                if (b.size > 2 shl 20) throw PluginException("E_INSTALL", "插件文件超过 2MB")
+                return String(b, Charsets.UTF_8)
+            }
+        }
+    }
 }
