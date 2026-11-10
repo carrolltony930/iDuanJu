@@ -1,18 +1,36 @@
 # Android 进度
 
-更新：2026-11-11 02:20（Asia/Shanghai）
+更新：2026-11-11 03:15（Asia/Shanghai）· 断点续做：先看「当前进行中」
 
-## 已推送（main）
-- bfb1aa5 骨架 · 93a2757 首页/详情/播放/片库/Medusa/搜索 · 3d26339 HLS 去广告移植/找剧/调试 E2E
-- 本次：软拒绝研究 + one-shot 设备（无需覆盖即可取流）+ 模拟器联网 + UI 修正
+## 当前进行中
+- 真数据 iOS↔Android 对比（shots/compare/，本地；仅非成人、非采集站截图进仓库 docs/screenshots/）
+- 注意：模拟器为 TCG 软渲染，debug 包首页常 ANR 被杀 → 截图用 release 包（同签名覆盖安装，数据保留）
 
-## 里程碑
-- [x] M0 环境（JDK 21、SDK 35、Gradle 8.11；KVM 卡死，只能 TCG）
-- [x] M1 core 红果：签名金值、设备注册、榜单、详情、resolvePure、CENC 解密
-- [x] M1 app：主题 / 玻璃 Tab / 首页 / 详情 / ExoPlayer+CENC / 设置覆盖
-- [~] M2 播放器手势 ✅、HLS 去广告（逐条移植 + 10 测）✅、CMS ❌
-- [~] M3 UI 1:1：首页/详情/播放器 已在模拟器真数据对比（docs/screenshots/）；差异见下
-- [~] M4 Medusa ✅、签名搜索 ✅、筛选找剧 ✅；插件/TG/黄果/漫画/弹幕 ❌
+## 对齐清单（iOS → Android）
+| 模块 | 状态 |
+|---|---|
+| 红果：注册/榜单/详情/取流/CENC 解密/播放 | ✅ 模拟器真数据 E2E |
+| 红果软拒绝 | ✅ 根因已定位，one-shot 设备修复（见下） |
+| 详情：题材标签/演员/收藏数/系列（关联季） | ✅ 34a78e6（JVM 真数据：4 标签、14 季） |
+| 播放器：手势/倍速/画质/技术标签/S 季标 | ✅ |
+| HLS 去广告（逐条移植） | ✅ 10 测 |
+| 苹果 CMS（maccms v10） | ✅ bcaa66b，模拟器：分类/详情/HLS 播放，去广告 14 段 51 s |
+| idj1 JS 插件运行时（QuickJS） | ✅ 682f7f0/e057cd7/524b52d：宿主 API 全量（http 白名单+逐跳校验、html、crypto、codec、m3u8、storage、settings、log），视频插件首页/分类/搜索/详情/播放；「我的」安装/开关/删除 |
+| 漫画插件 / 漫画阅读器 | ❌（manifest 可装，阅读器未移植） |
+| 弹幕 | ❌（按钮在，弹幕层未移植） |
+| TG / 黄果 / 频道页 | ❌ |
+| 插件订阅 / 签名校验 / CF 验证 / 执行超时中断 | ❌（QuickJS 包装库无中断钩子：超时即弃用实例） |
+
+## 提交（main）
+- 59f5f9d 软拒绝根因 + one-shot 设备 + 模拟器出口开关 + UI 修正
+- 34a78e6 详情增强（web _ROUTER_DATA、系列落地、关联季、SeasonParser）、播放器季标、Hero 简介自适应
+- bcaa66b 苹果 CMS 适配 + ContentFilter + NetGuard + HLS 本地清单去广告
+- 682f7f0 idj1 插件宿主 + 引擎无关运行时 + 视频映射 + 测试
+- e057cd7 QuickJS 引擎、PluginStore、plugin: 路由、播放器请求头、调试自测
+- 524b52d 「我的」插件管理；简介实体清理
+
+## APK（/workspace/iduanju-android/dist，SHA256 见 dist/SHA256SUMS）
+- 见文末「APK」节（每次构建后更新）
 
 ## 红果软拒绝：根因与修复（2026-11-11 实测，纯播放端点 video_model level 3）
 探针：`core/src/test/.../SoftRejectProbeTest.kt`（`-Plive=1 -Pprobe=1|2|3`，设备只在运行时传入，不落盘）
@@ -47,18 +65,31 @@
 - 播放器会话按 iOS 绕过代理（NO_PROXY），为模拟器加开发开关 `dev.playerSystemProxy`（E2E：`--es proxy 1`），默认关闭。
 - AVD idj30（API 30 x86_64，TCG，2 GB）。SystemUI 常 ANR，`adb root` 后杀掉 systemui 恢复。
 
-## UI 对比（docs/screenshots/，模拟器真数据）
-- 首页：结构与 iOS 一致（搜索条/源栏/chip/海报 Hero/继续观看/热播榜）；修了 Hero「查看详情」被挤出。
-- 详情：标题/元信息/播放胶囊/收藏/主演/简介/选集一致；iOS 有题材标签行与「系列·共N季」，本条剧数据下 Android 未显示（待查）。
-- 播放器：顶栏/中控/底部信息/工具栏一致；技术标签只显示 1080P → 已改为首帧后刷新；iOS 有「S8 ·」季标、弹幕层，Android 缺。
+## 测试（2026-11-11 03:00）
+- 离线：HGSignGolden 2、HLSAdFilter 10、Medusa 1、MacCMSTest 2、PluginHostTest 4（manifest/域名策略/crypto/html/m3u8/unpack/storage/重定向拦截/限流；3 个内置 iOS 插件均可解析）：全部 PASS
+- 在线（-Plive / -PcmsApi，地址只在运行时传入）：HongguoLiveTest 3、CENCLiveTest（route=oneshot）、MacCMSLiveTest、PluginHostLiveTest：PASS
+- 模拟器（AVD idj30，API 30 x86_64，TCG，经宿主代理）：
+  - 红果 E2E RESULT OK（注册→榜单→详情 202 集→1080p bytevc1 加密→解密 8,937,645 B ftyp），UI 播放 HEVC
+  - CMS：源栏「采集A」、详情、HLS 播放
+  - 插件：`--es pluginSelfTest 1` → SELFTEST OK（真 QuickJS：async/await、html、aes、storage、域名拦截 E_PERMISSION、宿主错误码 E_NOT_FOUND）
+  - 插件实网：本地桥接插件（不进仓库）→ 列表 20 / 分类 20 / 详情 8 集 / play→HLS 去广告 14 段 → UI 播放 0:27
 
-## 测试（2026-11-11 02:00）
-- HGSignGoldenTest 2、HLSAdFilterTest 10、MedusaTest 1：PASS
-- HongguoLiveTest 3（注册+榜单、详情+取流+媒体、签名搜索）：PASS（无覆盖）
-- CENCLiveTest：PASS（无覆盖，route=oneshot）
-- 模拟器 E2E：RESULT OK（注册→榜单 12→详情 202 集→取流 1080p bytevc1 enc→下载解密 8,937,645 B ftyp）
+## 真机检查清单
+- 播放流畅度、PiP、HEVC 硬解、CENC 解密速度
+- one-shot 设备在移动网络 / Wi-Fi 下的成功率（模拟器 11/12）
+- CMS HLS 播放与去广告；插件 QuickJS 在 arm64 上加载与执行耗时
+- 深色/浅色主题、刘海屏、横屏
 
 ## 待做
-- CMS（MacCMS）/ QuickJS 插件 / TG / 黄果 / 漫画 / 弹幕 / 授权页 / 搜索系列落地 / 流式 CENC 代理
-- 季标、详情标签与系列行
-- 真机：实际播放流畅度、PiP、HEVC 硬解、one-shot 在移动网络下的成功率
+- 对比截图：搜索/选集面板/频道面板；差异修正
+- 弹幕层、漫画阅读器（插件 pages）、TG、黄果、频道
+- 插件订阅/推荐插件、执行超时中断
+
+## APK
+构建于 built 524b52d 03:12:14（release 用 Android Debug 证书签名；未混淆）
+```
+iDuanJu-1.5.2-android-debug.apk 28632859
+iDuanJu-1.5.2-android-release.apk 20382519
+5708e2624b84d8b78253af8a1af6f8a41af42c55af9510a1352cc21625fa2981  iDuanJu-1.5.2-android-debug.apk
+b803448671475dd235067dccaf0438ae17c0a1c4dc17421917f02aff24927010  iDuanJu-1.5.2-android-release.apk
+```
