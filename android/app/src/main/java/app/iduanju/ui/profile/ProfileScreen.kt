@@ -185,7 +185,8 @@ private fun CMSSection() {
     Text("苹果 CMS 采集站", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
     Text("填 maccms v10 采集接口（…/api.php/provide/vod/），仅 https；只播放直链 m3u8 / mp4 线路，未成年相关内容一律过滤。",
         color = c.secondary, fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 6.dp, bottom = 8.dp))
-    store.sites.forEach { s ->
+    // iOS: adult sites stay hidden (even in settings) until the 片源管理 gate is open
+    store.sites.filter { !it.adult || IdjApp.instance.cms.adultUnlocked }.forEach { s ->
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(s.name + if (s.adult) " · 成人" else "", color = c.text, fontSize = 14.sp)
@@ -313,7 +314,8 @@ private fun PluginSection() {
     Text("插件（idj1）", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
     Text("粘贴 .idjplugin / manifest / 订阅列表的 https 链接，或 .idjplugin 文件内容。插件运行在 QuickJS 沙箱里，只能访问 manifest 声明的域名；未成年相关内容一律过滤。",
         color = c.secondary, fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 6.dp, bottom = 8.dp))
-    store.plugins.forEach { p ->
+    // iOS PluginStore.visiblePlugins: adult plugins listed only after the gate is open
+    store.plugins.filter { !it.adult || IdjApp.instance.cms.adultUnlocked }.forEach { p ->
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(p.name + if (p.adult) " · 成人" else "", color = c.text, fontSize = 14.sp)
