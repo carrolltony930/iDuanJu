@@ -16,6 +16,8 @@ class IdjApp : Application() {
     lateinit var cms: app.iduanju.data.CMSStore
     lateinit var plugins: app.iduanju.plugin.PluginStore
         private set
+    lateinit var tg: app.iduanju.tg.TGStore
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -30,6 +32,7 @@ class IdjApp : Application() {
         library = LibraryStore(this)
         cms = app.iduanju.data.CMSStore(this)
         plugins = app.iduanju.plugin.PluginStore(this)
+        tg = app.iduanju.tg.TGStore(this)
         app.iduanju.core.hls.HLSAdFilter.enabled = settings.adStripEnabled
     }
 

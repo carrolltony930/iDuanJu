@@ -114,7 +114,7 @@ object HomeFmt {
 fun formatCount(n: Long) = HomeFmt.count(n)
 
 @Composable
-fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}) {
+fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}, onPlay: (String) -> Unit = {}) {
     val c = IdjThemeColors
     // iOS HomeSource.all: [红果, 黄果, AI剧] + visible sites (采集站 / plugins) + [频道, 漫画]
     val sites = IdjApp.instance.cms.visibleSites
@@ -176,6 +176,7 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}) {
                 if (any is app.iduanju.core.cms.CMSSite) { SiteFeedPage(any, onOpenDetail); return@HorizontalPager }
                 if (any is app.iduanju.plugin.PluginStore.Installed) { PluginFeedPage(any, onOpenDetail); return@HorizontalPager }
                 val s = any as HomeSource
+                if (s == HomeSource.channels) { app.iduanju.tg.ChannelFeedPage(onPlay); return@HorizontalPager }
                 if (s.subs().isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("「${s.label}」Android 版尚未移植", color = c.secondary, fontSize = 14.sp)

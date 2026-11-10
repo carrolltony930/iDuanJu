@@ -35,6 +35,7 @@ class E2EReceiver : BroadcastReceiver() {
         intent.getStringExtra("jsEval")?.let { src -> Thread { File(src).readLines().filter { it.isNotBlank() }.forEach { PluginSelfTest.eval(it) } }.start(); return }
         if (intent.getStringExtra("pluginSelfTest") == "1") { Thread { PluginSelfTest.run() }.start(); return }
         intent.getStringExtra("plugin")?.let { path -> Thread { PluginSelfTest.live(path, intent.getStringExtra("q")) }.start(); return }
+        intent.getStringExtra("tgAdd")?.let { Log.i("IDJ-E2E", "TG added ${app.tg.add(it)?.username}"); return }
         Thread {
             fun log(s: String) = Log.i("IDJ-E2E", s)
             try {
