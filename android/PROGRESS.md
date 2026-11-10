@@ -1,9 +1,9 @@
 # Android 进度
 
-更新：2026-11-11 05:00（Asia/Shanghai）· 断点续做：先看「当前进行中」
+更新：2026-11-11 05:15（Asia/Shanghai）· 断点续做：先看「当前进行中」
 
 ## 当前进行中
-- 对比截图（shots/compare/，本地）：01 首页、02 频道面板、03 搜索、04 详情、05 播放器、07 弹幕 已出；06 选集面板待截（TCG 下播放时 screencap 极慢，控件自动隐藏）
+- 对比截图（shots/compare/，本地）：01 首页、02 频道面板、03 搜索、04 详情、05 播放器、06 选集面板、07 弹幕 已出（截图改用 `adb emu screenrecord screenshot`：视频 SurfaceView 在 TCG 下会让 `screencap` 返回旧帧）
 - 仅非成人、非采集站截图进仓库 docs/screenshots/
 - 注意：模拟器为 TCG 软渲染，debug 包首页常 ANR 被杀 → 截图用 release 包（同签名覆盖安装，数据保留）
 
@@ -18,6 +18,8 @@
 | 苹果 CMS（maccms v10） | ✅ bcaa66b，模拟器：分类/详情/HLS 播放，去广告 14 段 51 s |
 | idj1 JS 插件运行时（QuickJS） | ✅ 682f7f0/e057cd7/524b52d：宿主 API 全量（http 白名单+逐跳校验、html、crypto、codec、m3u8、storage、settings、log），视频插件首页/分类/搜索/详情/播放；「我的」安装/开关/删除 |
 | 漫画插件（JSComicProvider） | ✅ 0fe4331：home/category/search/detail/pages；idjimg:// 图片引用（逐插件媒体域白名单、逐跳校验、头过滤、30 MB 上限、AES / 条带重排变换）；内置漫画插件均为成人 → 仅成人开关下显示，未上机实测 |
+| 选集面板 | ✅ 更新至 N 集、季 chips（新→旧，点选切季）、每 30 集区间 chips、6 列、当前集描边（compare-06） |
+| 解码能力回退 | ✅ 按 MediaCodecList 选设备能解的最高档（模拟器软解 HEVC 1080p 报 NO_EXCEEDS_CAPABILITIES → 降档）；iOS 恒有 HEVC 硬解无此问题 |
 | 首页「频道」面板（⌄） | ✅ e4ae037：标题+完成、按页分组（红果 全部榜单/真人剧/漫剧/剧星榜；黄果 视频站/AI 站/App 源；AI剧；采集站/插件），点选切页+子频道 |
 | 弹幕（番茄评论接口签名、合并、轨道布局） | ✅ 5b5b587：JVM 实网 万妖图录传 第1集 126 条；模拟器目检：顶部 4 轨、×N 合并计数（compare-07） |
 | 搜索页（占位、历史/发现横滑 chips） | ✅ d7ba8b7 |
@@ -99,7 +101,6 @@
 - 弹幕叠层帧率（高密度时）；TG 视频直链（带时效 token）播放
 
 ## 待做
-- 对比截图：选集面板（06）
 - 频道管理/屏蔽规则/下载、漫画离线下载
 - 黄果在 iOS 分属「黄果」「AI剧」两页，Android 合并为「黄果」一页的 chips（视频站/AI·/App·）
 - 插件订阅/推荐插件、执行超时中断

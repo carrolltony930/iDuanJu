@@ -44,7 +44,7 @@ object EpisodeCache {
     private fun load(ep: app.iduanju.core.hongguo.HGEpisode, onStatus: (String) -> Unit): Playable {
         val vid = ep.vid
         val r = app.iduanju.data.Catalog.resolve(ep)
-        val s = r.streams.firstOrNull() ?: throw Exception(r.err ?: "无可用流")
+        val s = DecoderCaps.pick(r.streams) ?: throw Exception(r.err ?: "无可用流")
         if (s.kind == app.iduanju.core.hongguo.HGStreamKind.hls) {
             // iOS serves the ad-stripped playlist from its loopback proxy; here it is written to a local file.
             onStatus("解析播放列表…")
@@ -59,7 +59,7 @@ object EpisodeCache {
             return Playable(f.absolutePath, s.quality, s.codec, false, hls = true, headers = s.headers, note = note)
         }
         if (s.key.isEmpty()) return Playable(s.url, s.quality, s.codec, false, headers = s.headers)
-        val f = File(dir(), "${safeName(vid)}.mp4")
+        val f = File(dir(), "${safeName(vid)}.${s.quality ?: "q"}.${s.codec}.mp4")
         if (f.length() > 0) return Playable(f.absolutePath, s.quality, s.codec, true)
         onStatus("下载解密…")
         val enc = http.newCall(Request.Builder().url(s.url).header("User-Agent", "com.phoenix.read/73932").build()).execute().use { resp ->
@@ -68,7 +68,7 @@ object EpisodeCache {
         }
         if (enc.isEmpty()) throw Exception("媒体空包")
         val dec = CENCDecryptor.decryptCopy(enc, s.key)
-        val tmp = File(dir(), "${safeName(vid)}.part"); tmp.writeBytes(dec); tmp.renameTo(f)
+        val tmp = File(dir(), f.name + ".part"); tmp.writeBytes(dec); tmp.renameTo(f)
         trim()
         return Playable(f.absolutePath, s.quality, s.codec, true)
     }
