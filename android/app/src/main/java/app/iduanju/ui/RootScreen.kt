@@ -27,8 +27,9 @@ import app.iduanju.ui.search.SearchScreen
 import app.iduanju.ui.theme.IdjThemeColors
 
 @Composable
-fun RootScreen() {
+fun RootScreen(initialRoute: String? = null) {
     val nav = rememberNavController()
+    LaunchedEffect(initialRoute) { initialRoute?.let { runCatching { nav.navigate(it) } } }
     var tab by remember { mutableIntStateOf(0) }
     val back = nav.currentBackStackEntryAsState().value
     val route = back?.destination?.route ?: "home"

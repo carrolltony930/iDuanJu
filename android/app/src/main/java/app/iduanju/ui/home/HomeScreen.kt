@@ -82,7 +82,7 @@ object BoardCache {
         try {
             val r = withContext(Dispatchers.IO) { IdjApp.instance.hongguo.rank(b.sub, b.genre).items }
             items[b.id] = r; failed.remove(b.id)
-        } catch (e: Exception) { failed[b.id] = e.message ?: "加载失败" }
+        } catch (e: Exception) { failed[b.id] = e.message ?: "加载失败"; android.util.Log.w("IDJ", "board ${b.id} failed: $e") }
         finally { synchronized(loading) { loading.remove(b.id) } }
     }
 }

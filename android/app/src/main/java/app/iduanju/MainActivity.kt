@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             IdjTheme {
                 Surface(Modifier.fillMaxSize(), color = IdjThemeColors.bg) {
-                    RootScreen()
+                    RootScreen(initialRoute = intent?.getStringExtra("route"))
                 }
             }
         }

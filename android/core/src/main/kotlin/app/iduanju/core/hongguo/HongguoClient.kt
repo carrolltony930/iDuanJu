@@ -290,6 +290,36 @@ class HongguoClient(
         throw lastErr
     }
 
+    // ---- panel / category (list.go) ----
+    @Volatile private var panelCache: Pair<Long, HGPanel>? = null
+
+    fun panel(): HGPanel {
+        panelCache?.let { (at, p) -> if (nowMs() - at < 600_000) return p }
+        val d = ensureDevice()
+        val u = URL_CATEGORY + "need_selector_panel=true&req_type=only_panel&req_scene=default&" + listQuery(d, nowMs())
+        val data = ok(list(u, method = "POST"), "panel")
+        val rows = J.arr(data.opt("selector_rows")).map { r ->
+            val rm = J.dict(r)
+            HGFilterRow(J.str(rm.opt("type")), J.str(rm.opt("row_name")), J.int(rm.opt("selection_type")),
+                J.arr(rm.opt("items")).map { HGFilterOption(J.str(J.dict(it).opt("selector_item_id")), J.str(J.dict(it).opt("show_name"))) })
+        }
+        return HGPanel(rows).also { panelCache = nowMs() to it }
+    }
+
+    fun category(filterIds: List<String>, offset: Int = 0, sessionId: String? = null): HGPage {
+        val d = ensureDevice()
+        var u = URL_CATEGORY + "offset=$offset&need_selector_panel=false&limit=12&session_id=" + GoURL.queryEscape(sessionId ?: "") +
+            "&client_req_type=3&req_type=only_content"
+        if (filterIds.isNotEmpty()) u += "&filter_ids=" + GoURL.queryEscape(filterIds.joinToString(","))
+        u += "&" + listQuery(d, nowMs())
+        val data = ok(list(u, method = "POST"), "category")
+        val next = J.int(data.opt("next_offset"))
+        val sess = J.str(data.opt("session_id")).ifEmpty { sessionId ?: "" }
+        val more = J.bool(data.opt("has_more")) && next > offset && sess.isNotEmpty()
+        val items = J.arr(data.opt("video_data")).map { parseVideoData(J.dict(it)) }
+        return HGPage(items, more, next, null, sess)
+    }
+
     // ---- rank ----
     fun rank(sub: HGRankSub, genre: HGRankGenre, offset: Int = 0, seenIds: List<String> = emptyList()): HGPage {
         val selected = rankSelected[genre] ?: throw ProviderException.invalid("${genre.label} 没有 ${sub.label} 榜")
