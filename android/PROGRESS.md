@@ -1,9 +1,10 @@
 # Android 进度
 
-更新：2026-11-11 03:15（Asia/Shanghai）· 断点续做：先看「当前进行中」
+更新：2026-11-11 03:55（Asia/Shanghai）· 断点续做：先看「当前进行中」
 
 ## 当前进行中
-- 真数据 iOS↔Android 对比（shots/compare/，本地；仅非成人、非采集站截图进仓库 docs/screenshots/）
+- 频道（TG）模拟器验收截图；然后黄果（HuangguoClient 移植）、漫画阅读器
+- 真数据 iOS↔Android 对比（shots/compare/，本地；仅非成人、非采集站截图进仓库 docs/screenshots/）：首页/详情/搜索已对齐，待做选集面板/频道面板/播放器控件
 - 注意：模拟器为 TCG 软渲染，debug 包首页常 ANR 被杀 → 截图用 release 包（同签名覆盖安装，数据保留）
 
 ## 对齐清单（iOS → Android）
@@ -17,8 +18,10 @@
 | 苹果 CMS（maccms v10） | ✅ bcaa66b，模拟器：分类/详情/HLS 播放，去广告 14 段 51 s |
 | idj1 JS 插件运行时（QuickJS） | ✅ 682f7f0/e057cd7/524b52d：宿主 API 全量（http 白名单+逐跳校验、html、crypto、codec、m3u8、storage、settings、log），视频插件首页/分类/搜索/详情/播放；「我的」安装/开关/删除 |
 | 漫画插件 / 漫画阅读器 | ❌（manifest 可装，阅读器未移植） |
-| 弹幕 | ❌（按钮在，弹幕层未移植） |
-| TG / 黄果 / 频道页 | ❌ |
+| 弹幕（番茄评论接口签名、合并、轨道布局） | ✅ 5b5b587：JVM 实网 万妖图录传 第1集 126 条；叠层 UI 待模拟器目检 |
+| 搜索页（占位、历史/发现横滑 chips） | ✅ d7ba8b7 |
+| 频道（TG 公开频道网页预览 t.me/s，无需账号） | ✅ 6f8befc：解析器（iOS 同 fixture 测试）、实网 telegram 20 帖/13 视频、订阅/合并流/翻页/视频播放；不内置任何频道；TDLib 不移植 |
+| 黄果 | ❌ 进行中 |
 | 插件订阅 / 签名校验 / CF 验证 / 执行超时中断 | ❌（QuickJS 包装库无中断钩子：超时即弃用实例） |
 
 ## 提交（main）
@@ -28,6 +31,10 @@
 - 682f7f0 idj1 插件宿主 + 引擎无关运行时 + 视频映射 + 测试
 - e057cd7 QuickJS 引擎、PluginStore、plugin: 路由、播放器请求头、调试自测
 - 524b52d 「我的」插件管理；简介实体清理
+- 7d05d02 PROGRESS 中文化
+- d7ba8b7 搜索页对齐 iOS
+- 5b5b587 弹幕（签名移植 + 合并 + 轨道 + 叠层）
+- 6f8befc Telegram 频道页
 
 ## APK（/workspace/iduanju-android/dist，SHA256 见 dist/SHA256SUMS）
 - 见文末「APK」节（每次构建后更新）
@@ -66,8 +73,8 @@
 - AVD idj30（API 30 x86_64，TCG，2 GB）。SystemUI 常 ANR，`adb root` 后杀掉 systemui 恢复。
 
 ## 测试（2026-11-11 03:00）
-- 离线：HGSignGolden 2、HLSAdFilter 10、Medusa 1、MacCMSTest 2、PluginHostTest 4（manifest/域名策略/crypto/html/m3u8/unpack/storage/重定向拦截/限流；3 个内置 iOS 插件均可解析）：全部 PASS
-- 在线（-Plive / -PcmsApi，地址只在运行时传入）：HongguoLiveTest 3、CENCLiveTest（route=oneshot）、MacCMSLiveTest、PluginHostLiveTest：PASS
+- 离线：TGParserTest 2（iOS fixture）、HGDanmakuTest、HGSignGolden 2、HLSAdFilter 10、Medusa 1、MacCMSTest 2、PluginHostTest 4（manifest/域名策略/crypto/html/m3u8/unpack/storage/重定向拦截/限流；3 个内置 iOS 插件均可解析）：全部 PASS
+- 在线（-Plive / -PcmsApi，地址只在运行时传入）：HongguoLiveTest 3、HGDanmaku live（126 条）、TG live（20 帖）、CENCLiveTest（route=oneshot）、MacCMSLiveTest、PluginHostLiveTest：PASS
 - 模拟器（AVD idj30，API 30 x86_64，TCG，经宿主代理）：
   - 红果 E2E RESULT OK（注册→榜单→详情 202 集→1080p bytevc1 加密→解密 8,937,645 B ftyp），UI 播放 HEVC
   - CMS：源栏「采集A」、详情、HLS 播放
@@ -79,17 +86,18 @@
 - one-shot 设备在移动网络 / Wi-Fi 下的成功率（模拟器 11/12）
 - CMS HLS 播放与去广告；插件 QuickJS 在 arm64 上加载与执行耗时
 - 深色/浅色主题、刘海屏、横屏
+- 弹幕叠层帧率（高密度时）；TG 视频直链（带时效 token）播放
 
 ## 待做
 - 对比截图：搜索/选集面板/频道面板；差异修正
-- 弹幕层、漫画阅读器（插件 pages）、TG、黄果、频道
+- 黄果、漫画阅读器（插件 pages）、频道管理/屏蔽规则/下载
 - 插件订阅/推荐插件、执行超时中断
 
 ## APK
-构建于 built 524b52d 03:12:14（release 用 Android Debug 证书签名；未混淆）
+构建于 6f8befc 工作树（含频道页；release 用 Android Debug 证书签名；未混淆）
 ```
-iDuanJu-1.5.2-android-debug.apk 28632859
-iDuanJu-1.5.2-android-release.apk 20382519
-5708e2624b84d8b78253af8a1af6f8a41af42c55af9510a1352cc21625fa2981  iDuanJu-1.5.2-android-debug.apk
-b803448671475dd235067dccaf0438ae17c0a1c4dc17421917f02aff24927010  iDuanJu-1.5.2-android-release.apk
+iDuanJu-1.5.2-android-debug.apk 28632918
+iDuanJu-1.5.2-android-release.apk 20448055
+b7e2390155a65866e4e46b9b80e94e7253c9bd4c8dc6f0a4c1fe7789043e43fb  iDuanJu-1.5.2-android-debug.apk
+e903feb6cda0dabd53adee6f927a5224802a66fac76a612576668e29985f4dc8  iDuanJu-1.5.2-android-release.apk
 ```
