@@ -312,7 +312,11 @@ private fun PosterHero(board: String, picks: List<HGSeries>, index: Int, setInde
                     if (!blurb.isNullOrEmpty() && blurb != HomeFmt.progress(s)) {
                         Spacer(Modifier.height(6.dp))
                         // blurb yields height first so the CTA never gets clipped on long titles
-                        Text(blurb, color = Color.White.copy(0.66f), fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        var fitsOneLine by remember(blurb) { mutableStateOf(true) }
+                        Text(blurb, color = Color.White.copy(if (fitsOneLine) 0.66f else 0f), fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                            // hide instead of showing a half-clipped line when the title wraps to two lines
+                            onTextLayout = { r -> fitsOneLine = r.lineCount > 0 && r.getLineBottom(0) <= r.size.height + 0.5f })
                     }
                   }
                     Spacer(Modifier.height(6.dp))

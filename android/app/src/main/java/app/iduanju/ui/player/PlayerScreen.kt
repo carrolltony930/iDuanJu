@@ -271,6 +271,14 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
                             Text(d.source, color = Color.White.copy(0.85f), fontSize = 12.sp,
                                 modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color.White.copy(0.18f)).padding(horizontal = 8.dp, vertical = 3.dp))
                             Spacer(Modifier.width(10.dp))
+                            // iOS seasonTag: "S8 · " when sibling seasons are numbered distinctly
+                            val seasonTag = remember(d.relatedSeries) {
+                                val ss = d.relatedSeries
+                                val nums = ss.map { app.iduanju.core.hongguo.SeasonParser.seasonNo(it.title) }
+                                if (ss.size > 1 && nums.toSet().size == ss.size)
+                                    "S" + app.iduanju.core.hongguo.SeasonParser.seasonNo(ss.firstOrNull { it.seriesId == d.seriesId }?.title ?: d.title) else null
+                            }
+                            seasonTag?.let { Text("$it · ", color = Color.White.copy(0.6f), fontSize = 15.sp) }
                             Text("第${d.episodes.getOrNull(epIndex)?.ep ?: startEp}集", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                             Text(" / 共${maxOf(d.totalEps, d.episodes.size)}集", color = Color.White.copy(0.6f), fontSize = 15.sp)
                         }

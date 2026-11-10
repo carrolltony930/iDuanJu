@@ -40,6 +40,8 @@ class HongguoClient(
     /** iOS parity: the player session bypasses proxies. [HGNet.playerUsesSystemProxy] is a developer escape hatch (emulator egress). */
     private val playerHttp: OkHttpClient get() = if (HGNet.playerUsesSystemProxy) playerHttpSystem else playerHttpDirect
 
+    init { HGDetailExtras.parser = this }
+
     @Volatile private var device: HGDevice? = null
     /** Diagnostics: which identity served the last successful pure resolve (override / oneshot / mint). */
     @Volatile var lastPureRoute: String = ""
@@ -60,7 +62,7 @@ class HongguoClient(
         private const val URL_BOOK_DIR = "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/directory/all_items/v?"
         private const val URL_CATEGORY = "https://api5-normal-sinfonlineb.fqnovel.com/reading/distribution/category/landpage/v:version/?"
         const val URL_RANK_CELL = "https://api5-normal-sinfonlinec.fqnovel.com/reading/bookapi/bookmall/cell/change/v:version/?"
-        private const val URL_PLAN = "https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/plan/v?"
+        internal const val URL_PLAN = "https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/plan/v?"
         private const val URL_VIDEO_MODEL = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/video_model/v1/"
         private const val VIDEO_MODEL_UA =
             "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
@@ -123,8 +125,22 @@ class HongguoClient(
             "&version_code=72133&version_name=7.2.133&device_platform=android&os=android&ssmix=a&device_type=EML-AL00&device_brand=HUAWEI" +
             "&language=zh&os_api=29&os_version=10&manifest_version_code=72133&resolution=1080*2340&dpi=480&update_version_code=72133&_rticket=$rt"
 
+    /** Which identity the detail preload carries: override > registered list device ("registered") or minted ("mint"). */
+    @Volatile var detailIdentity: String = "registered"
+    @Volatile var lastDetailRoute: String = ""
+
+    private fun detailIdsPart(): String {
+        HGPlayerDevice.overrideProvider?.invoke()?.let { (d, i) -> if (d.isNotEmpty() && i.isNotEmpty()) return "iid=$i&device_id=$d" }
+        if (detailIdentity == "oneshot") HGOneShotDevice.register(http)?.let { return "iid=${it.iid}&device_id=${it.did}" }
+        if (detailIdentity == "registered") {
+            val d = try { ensureDevice() } catch (_: Exception) { null }
+            if (d != null) return "iid=${d.iid}&device_id=${d.deviceId}"
+        }
+        return HGPlayerDevice.queryPart()
+    }
+
     private fun detailQuery(rt: Long): String =
-        HGPlayerDevice.queryPart() +
+        detailIdsPart() +
             "&ac=wifi&channel=ry_hongguo_offlinestore_04&aid=8662&app_name=novelread" +
             "&version_code=73332&version_name=7.3.3.32&device_platform=android&os=android&ssmix=a&device_type=sdk_gphone64_arm64&device_brand=google" +
             "&language=en&os_api=35&os_version=15&manifest_version_code=73332&resolution=1080*2400&dpi=420&update_version_code=73332" +
@@ -362,9 +378,16 @@ class HongguoClient(
             ),
             "dr_scene" to "preload", "series_id" to seriesId,
         )
-        // no retry on soft-rejected detail preload (iOS bb23241)
-        val detailJ = try { postJSON(URL_DETAIL, detailQuery(nowMs()), J.encodeSorted(body), retries = 0) } catch (_: Exception) { null }
-        val dirJ = try { bookDirectory(seriesId) } catch (_: Exception) { null }
+        // no retry on soft-rejected detail preload (iOS bb23241); preload / directory / landing / web run concurrently (iOS async let)
+        val pool = java.util.concurrent.ForkJoinPool.commonPool()
+        val detailF = java.util.concurrent.CompletableFuture.supplyAsync({ try { postJSON(URL_DETAIL, detailQuery(nowMs()), J.encodeSorted(body), retries = 0) } catch (_: Exception) { null } }, pool)
+        val dirF = java.util.concurrent.CompletableFuture.supplyAsync({ try { bookDirectory(seriesId) } catch (_: Exception) { null } }, pool)
+        val landedF = java.util.concurrent.CompletableFuture.supplyAsync({ try { HGDetailExtras.seriesLanding(this, seriesId, maxPages = 2) } catch (_: Exception) { null } }, pool)
+        val webF = if (web) java.util.concurrent.CompletableFuture.supplyAsync({ try { HGDetailExtras.webDetail(seriesId) } catch (_: Exception) { null } }, pool) else null
+        val detailJ = detailF.get()
+        val dirJ = dirF.get()
+        val landed = landedF.get()
+        val webD = webF?.get()
         var vd = JSONObject()
         if (detailJ != null && J.str(detailJ.opt("code")) == "0") {
             vd = J.dict(J.dict(J.dict(detailJ.opt("data")).opt(seriesId)).opt("video_data"))
@@ -372,6 +395,7 @@ class HongguoClient(
         val info = J.dict(J.dict(dirJ?.opt("data")).opt("book_info"))
         if (vd.length() == 0) {
             if (dirJ == null) throw ProviderException.upstream("详情获取失败")
+            lastDetailRoute = "directory"
             val data = J.dict(dirJ.opt("data"))
             val eps = ArrayList<HGEpisode>()
             J.arr(data.opt("item_data_list")).forEachIndexed { i, raw ->
@@ -384,12 +408,14 @@ class HongguoClient(
             val title = J.firstNonEmpty(J.str(info.opt("book_name")), J.str(info.opt("original_book_name")))
             val cover = J.str(info.opt("thumb_url"))
             val total = maxOf(J.int(info.opt("serial_count")), eps.size)
-            return HGSeriesDetail(
+            val related = HGDetailExtras.loadRelatedSeries(seriesId, title, cover, total, JSONObject(), landed)
+            return HGDetailExtras.enrich(HGSeriesDetail(
                 seriesId = seriesId, title = title, cover = cover, desc = J.str(info.opt("abstract")),
                 author = J.str(info.opt("author")), actors = names(info.opt("roles"), info.opt("role")),
-                onlineTime = J.unix(info.opt("create_time")), totalEps = total, episodes = eps,
-            )
+                onlineTime = J.unix(info.opt("create_time")), totalEps = total, episodes = eps, relatedSeries = related,
+            ), webD)
         }
+        lastDetailRoute = "preload"
         val eps = ArrayList<HGEpisode>()
         for (e in J.arr(vd.opt("video_list"))) {
             val em = J.dict(e); val vid = J.str(em.opt("vid")); if (vid.isEmpty()) continue
@@ -397,13 +423,15 @@ class HongguoClient(
         }
         var actors = celebrities(vd)
         if (actors.isEmpty()) actors = names(info.opt("roles"), info.opt("role"))
-        return HGSeriesDetail(
-            seriesId = seriesId, title = J.str(vd.opt("series_title")), cover = J.str(vd.opt("series_cover")),
+        val title = J.str(vd.opt("series_title")); val cover = J.str(vd.opt("series_cover")); val total = J.int(vd.opt("episode_cnt"))
+        val related = HGDetailExtras.loadRelatedSeries(seriesId, title, cover, maxOf(total, eps.size), vd, landed)
+        return HGDetailExtras.enrich(HGSeriesDetail(
+            seriesId = seriesId, title = title, cover = cover,
             desc = J.firstNonEmpty(J.str(vd.opt("series_intro")), J.str(info.opt("abstract"))),
             author = J.firstNonEmpty(J.str(info.opt("author")), J.str(info.opt("source"))),
             actors = actors, onlineTime = J.unix(info.opt("create_time")),
-            totalEps = J.int(vd.opt("episode_cnt")), episodes = eps,
-        )
+            totalEps = total, episodes = eps, relatedSeries = related,
+        ), webD)
     }
 
     private fun bookDirectory(sid: String): JSONObject {

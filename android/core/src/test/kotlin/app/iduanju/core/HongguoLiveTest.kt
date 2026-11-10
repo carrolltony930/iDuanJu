@@ -46,8 +46,15 @@ class HongguoLiveTest {
         val sid = page.items.first().seriesId
         println("[live] detail sid=$sid title=${page.items.first().title}")
         val detail = client.detail(sid, web = false)
-        println("[live] detail eps=${detail.episodes.size} title=${detail.title}")
+        println("[live] detail eps=${detail.episodes.size} title=${detail.title} tags=${detail.tags} related=${detail.relatedSeries.size} cast=${detail.cast.size} fav=${detail.favoriteCount}")
         assertTrue("no episodes", detail.episodes.isNotEmpty())
+        println("[live] detail route=${client.lastDetailRoute} (identity=${client.detailIdentity})")
+        for (mode in listOf("mint", "registered", "oneshot")) {
+            client.detailIdentity = mode
+            val dw = client.detail(sid)
+            println("[live] detail(web) identity=$mode route=${client.lastDetailRoute} tags=${dw.tags} related=${dw.relatedSeries.size} ${dw.relatedSeries.map { it.title }.take(4)} cast=${dw.cast.map { it.name }.take(3)} fav=${dw.favoriteCount}")
+        }
+        client.detailIdentity = "registered"
         val ep = detail.episodes.first()
         println("[live] resolve vid=${ep.vid}")
         try {

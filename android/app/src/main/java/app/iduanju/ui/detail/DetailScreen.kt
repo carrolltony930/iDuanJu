@@ -64,7 +64,7 @@ fun DetailScreen(seriesId: String, onBack: () -> Unit, onPlay: (String, Int) -> 
     var reload by remember { mutableIntStateOf(0) }
     LaunchedEffect(seriesId, reload) {
         err = null
-        try { d = withContext(Dispatchers.IO) { IdjApp.instance.hongguo.detail(seriesId, web = false) } }
+        try { d = withContext(Dispatchers.IO) { IdjApp.instance.hongguo.detail(seriesId) } }
         catch (e: Exception) { err = e.message ?: "加载失败" }
     }
     val resume = lib.progress(seriesId)
