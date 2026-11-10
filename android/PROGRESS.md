@@ -1,6 +1,6 @@
 # Android 进度
 
-更新：2026-11-11 05:45（Asia/Shanghai）· 断点续做：先看「当前进行中」
+更新：2026-11-11 06:00（Asia/Shanghai）· 断点续做：先看「当前进行中」
 
 ## 当前进行中
 - 对比截图（shots/compare/，本地）：01 首页、02 频道面板、03 搜索、04 详情、05 播放器、06 选集面板、07 弹幕 已出（截图改用 `adb emu screenrecord screenshot`：视频 SurfaceView 在 TCG 下会让 `screencap` 返回旧帧）
@@ -17,7 +17,7 @@
 | HLS 去广告（逐条移植） | ✅ 10 测 |
 | 苹果 CMS（maccms v10） | ✅ bcaa66b，模拟器：分类/详情/HLS 播放，去广告 14 段 51 s |
 | idj1 JS 插件运行时（QuickJS） | ✅ 682f7f0/e057cd7/524b52d：宿主 API 全量（http 白名单+逐跳校验、html、crypto、codec、m3u8、storage、settings、log），视频插件首页/分类/搜索/详情/播放；「我的」安装/开关/删除 |
-| 漫画插件（JSComicProvider） | ✅ 0fe4331：home/category/search/detail/pages；idjimg:// 图片引用（逐插件媒体域白名单、逐跳校验、头过滤、30 MB 上限、AES / 条带重排变换）；内置漫画插件均为成人 → 仅成人开关下显示，未上机实测 |
+| 漫画插件（JSComicProvider） | ✅ 0fe4331：home/category/search/detail/pages；idjimg:// 图片引用（逐插件媒体域白名单、逐跳校验、头过滤、30 MB 上限、AES / 条带重排变换）；内置漫画插件均为成人 → 仅成人开关下显示；模拟器实测（debug `--es comicSelfTest <file>`，只记数量）：komikindo 列表 20/章节 36/页 18、manga18fx 24/120/5、jm18comic 79/3/55，第 1 页经 idjimg:// 抓取+变换后由 Coil 解码成功（jm 条带重排 600×840） |
 | 选集面板 | ✅ 更新至 N 集、季 chips（新→旧，点选切季）、每 30 集区间 chips、6 列、当前集描边（compare-06） |
 | 解码能力回退 | ✅ 按 MediaCodecList 选设备能解的最高档（模拟器软解 HEVC 1080p 报 NO_EXCEEDS_CAPABILITIES → 降档）；iOS 恒有 HEVC 硬解无此问题 |
 | 首页「频道」面板（⌄） | ✅ e4ae037：标题+完成、按页分组（红果 全部榜单/真人剧/漫剧/剧星榜；黄果 视频站/AI 站/App 源；AI剧；采集站/插件），点选切页+子频道 |
@@ -27,7 +27,8 @@
 | 黄果（AI 站镜像+取流 API、huangguo.video、旧 App AES 接口、封面 AES/XOR 解码） | ✅ 4fe7553：JVM 实网 视频站 37 部/取流 HLS、AI 站 20 部/21 集/master #EXTM3U（x-cdn-auth 头）、封面解密为 JPEG 1086×1448、App 源 6 个 tab/19 部。成人片源：仅在成人开关打开后显示；未成年 + 非自愿题材过滤（视频站 50→37）；不截图、不进仓库 |
 | 漫画（包子漫画、MangaDex；首页/详情/阅读器 上下滚动+左右翻页、续读、收藏） | ✅ 468edfd：iOS fixture 测试；实网 包子 36 部/一人之下 823 章/17 页，MangaDex 30 部/96 章/37 页；离线下载未移植；插件漫画待做 |
 | 搜索多源（红果/黄果/采集站/插件 源切换） | ✅ abad6c7 |
-| 插件订阅 / 签名校验 / CF 验证 / 执行超时中断 | ❌（QuickJS 包装库无中断钩子：超时即弃用实例） |
+| 插件订阅 / 推荐插件 | ✅ 订阅列表（plugins + cms，相对地址按订阅 URL 解析，按需安装/更新，不自动安装）、裸 manifest + entry 安装；推荐插件 = 构建时从 STV/Resources/Plugins 复制 iOS 同款 .idjplugin，成人插件仅解锁后显示；PluginSubscriptionTest 2 |
+| 插件签名校验 / CF 验证 / 执行超时中断 | ❌（QuickJS 包装库无中断钩子：超时即弃用实例） |
 
 ## 提交（main）
 - 59f5f9d 软拒绝根因 + one-shot 设备 + 模拟器出口开关 + UI 修正
@@ -52,6 +53,7 @@
 - 52a6ad4 低版本（API<31）封面模糊背景
 - 96c0088 弹幕去除 U+FFFC/BOM（安卓显示为 OBJ 方框）
 - 412e4ef 详情头图渐隐、简介字号对齐 iOS
+- 插件订阅、推荐插件、漫画插件上机自测（见 git log）
 
 ## APK（/workspace/iduanju-android/dist，SHA256 见 dist/SHA256SUMS）
 - 见文末「APK」节（每次构建后更新）
@@ -110,7 +112,7 @@
 ## 待做
 - 频道管理/屏蔽规则/下载、漫画离线下载
 - 黄果在 iOS 分属「黄果」「AI剧」两页，Android 合并为「黄果」一页的 chips（视频站/AI·/App·）
-- 插件订阅/推荐插件、执行超时中断
+- 插件执行超时中断、签名校验
 
 ## APK
 构建于 e8a82c9（2026-11-11 05:20；含频道面板、选集面板、解码回退、漫画插件；release 用 Android Debug 证书签名；未混淆）

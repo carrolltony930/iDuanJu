@@ -35,6 +35,21 @@ class E2EReceiver : BroadcastReceiver() {
         intent.getStringExtra("jsEval")?.let { src -> Thread { File(src).readLines().filter { it.isNotBlank() }.forEach { PluginSelfTest.eval(it) } }.start(); return }
         if (intent.getStringExtra("pluginSelfTest") == "1") { Thread { PluginSelfTest.run() }.start(); return }
         intent.getStringExtra("plugin")?.let { path -> Thread { PluginSelfTest.live(path, intent.getStringExtra("q")) }.start(); return }
+        // comicSelfTest=<bundled .idjplugin file>: install it, then list → detail → pages → decode page 1 via Coil (idjimg://). Counts only, no titles.
+        intent.getStringExtra("comicSelfTest")?.let { file -> Thread {
+            fun log(m: String) = Log.i("IDJ-E2E", m)
+            try {
+                val rec = app.plugins.install(app.plugins.bundledText(file), "内置")
+                val pc = app.plugins.comic(rec.id)
+                val cat = pc.categories.first()
+                val list = pc.list(cat, 1); log("comic ${rec.id} list items=${list.items.size} hasMore=${list.hasMore}")
+                val d = pc.detail(list.items.first()); log("comic detail chapters=${d.chapters.size}")
+                val pages = pc.pages(d.item, d.chapters.first()); log("comic pages=${pages.size} scheme=${pages.firstOrNull()?.substringBefore(':')}")
+                val r = runBlocking { coil.Coil.imageLoader(ctx).execute(coil.request.ImageRequest.Builder(ctx).data(pages.first()).allowHardware(false).build()) }
+                val dr = (r as? coil.request.SuccessResult)?.drawable
+                log(if (dr != null) "RESULT OK comic page1 ${dr.intrinsicWidth}x${dr.intrinsicHeight}" else "RESULT FAIL image ${(r as? coil.request.ErrorResult)?.throwable}")
+            } catch (e: Throwable) { log("RESULT FAIL ${e.javaClass.simpleName}: ${e.message}") }
+        }.start(); return }
         intent.getStringExtra("tgAdd")?.let { Log.i("IDJ-E2E", "TG added ${app.tg.add(it)?.username}"); return }
         Thread {
             fun log(s: String) = Log.i("IDJ-E2E", s)
