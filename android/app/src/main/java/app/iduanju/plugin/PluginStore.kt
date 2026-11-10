@@ -73,11 +73,51 @@ class PluginStore(private val ctx: Context) {
         return runCatching { video(id).inst.bundle.manifest }.getOrNull()?.let { app.iduanju.core.plugin.DomainPolicy(it.mediaDomains + it.httpDomains) }
     }
 
+    // MARK: subscriptions (iOS PluginStore.subscriptions, key stv.plugins.subscriptions)
+    val subscriptions = mutableStateListOf<PluginSubscription>().also { l ->
+        runCatching { val a = JSONArray(sp.getString(SUBS, "[]")); for (i in 0 until a.length()) l.add(PluginSubscription.fromJSON(a.getJSONObject(i))) }
+    }
+    private fun saveSubs() { sp.edit().putString(SUBS, JSONArray(subscriptions.map { it.toJSON() }).toString()).apply() }
+    fun addSubscription(url: String): PluginSubscription {
+        val u = url.trim()
+        val sub = PluginSubscription.apply(download(u), u)
+        subscriptions.removeAll { it.url == u }; subscriptions.add(sub); saveSubs(); return sub
+    }
+    fun refreshSubscriptions() {
+        for (i in subscriptions.indices) {
+            val s = subscriptions[i]
+            subscriptions[i] = runCatching { PluginSubscription.apply(download(s.url), s.url) }.getOrElse { s.copy(error = (it as? PluginException)?.friendly ?: it.message) }
+        }
+        saveSubs()
+    }
+    fun removeSubscription(url: String) { subscriptions.removeAll { it.url == url }; saveSubs() }
+
+    sealed class Pasted { data class Plugin(val rec: Installed) : Pasted(); data class Subscription(val sub: PluginSubscription) : Pasted() }
+    /** iOS PluginInstaller.interpret: an https manifest / .idjplugin / subscription URL, or a pasted bundle. Blocking. */
+    fun interpret(text: String, origin: String? = null): Pasted {
+        val t = text.trim()
+        if (!t.startsWith("https://") && !t.startsWith("http://")) return Pasted.Plugin(install(t, origin ?: "paste"))
+        val body = download(t)
+        val o = runCatching { JSONObject(body) }.getOrNull() ?: throw PluginException("E_INSTALL", "这个链接不是插件 manifest / .idjplugin / 订阅列表")
+        return when {
+            PluginSubscription.isSubscription(o) -> Pasted.Subscription(addSubscription(t))
+            o.has("manifest") -> Pasted.Plugin(install(body, origin ?: t))
+            o.has("schema") -> {
+                val entry = o.optString("entry")
+                if (!Regex("^[A-Za-z0-9_-]+\\.js$").matches(entry)) throw PluginException("E_INSTALL", "entry 地址无效")
+                val js = download(java.net.URI(t).resolve(entry).toString())
+                Pasted.Plugin(install(PluginSubscription.bundleFromManifest(body, js), origin ?: t))
+            }
+            else -> throw PluginException("E_INSTALL", "这个链接不是插件 manifest / .idjplugin / 订阅列表")
+        }
+    }
+
     /** iOS bundles adult comic plugins under 推荐插件 (never auto-installed). */
     fun bundled(): List<String> = runCatching { ctx.assets.list("plugins")?.filter { it.endsWith(".idjplugin") } ?: emptyList() }.getOrDefault(emptyList())
 
     companion object {
         const val KEY = "stv.plugins.index"
+        const val SUBS = "stv.plugins.subscriptions"
         private val http = okhttp3.OkHttpClient.Builder().callTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
 
         /** https only, never to a private/loopback address, ≤2 MB. */

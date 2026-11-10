@@ -15,6 +15,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,6 +63,7 @@ fun ProfileScreen() {
         CMSSection()
         Spacer(Modifier.height(20.dp))
         PluginSection()
+        SubscriptionSection()
         Spacer(Modifier.height(24.dp))
         Text("开源许可", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
         Text("GPL-3.0 · Media3 / OkHttp / Coil / Kotlin", color = c.secondary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
@@ -111,6 +113,59 @@ private fun CMSSection() {
     msg?.let { Text(it, color = c.secondary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
 }
 
+/** iOS PluginViews.subscriptionBlock: list entries, install on demand (never auto-install), add 采集站. */
+@Composable
+private fun SubscriptionSection() {
+    val c = IdjThemeColors
+    val ia = IdjApp.instance
+    val store = ia.plugins
+    if (store.subscriptions.isEmpty()) return
+    val scope = rememberCoroutineScope()
+    var msg by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("订阅", color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+        TextButton(enabled = !busy, onClick = { busy = true; scope.launch { withContext(Dispatchers.IO) { store.refreshSubscriptions() }; busy = false } }) { Text(if (busy) "刷新中…" else "刷新") }
+    }
+    val unlocked = ia.cms.adultUnlocked
+    store.subscriptions.forEach { s ->
+        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(RoundedCornerShape(12.dp)).background(c.surface).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(s.name.ifEmpty { s.url }, color = c.text, fontSize = 14.sp)
+                    Text(s.error ?: s.url, color = if (s.error == null) c.secondary else c.accentWarm, fontSize = 11.sp, maxLines = 1)
+                }
+                TextButton(onClick = { store.removeSubscription(s.url) }) { Text("删除") }
+            }
+            s.plugins.filter { it.adult != true || unlocked }.forEach { e ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(e.name + if (e.adult != false) " · 18+" else "", color = c.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    val inst = store.plugins.firstOrNull { it.id == e.id }
+                    val newer = inst != null && e.version != null && app.iduanju.core.plugin.PluginManifest.compare(e.version!!, inst.version) > 0
+                    if (inst != null && !newer) Text("已安装", color = c.secondary, fontSize = 12.sp)
+                    else TextButton(onClick = { scope.launch {
+                        msg = try { val r = withContext(Dispatchers.IO) { store.interpret(e.manifest, "订阅：" + s.url) }
+                            (r as? app.iduanju.plugin.PluginStore.Pasted.Plugin)?.let { "已安装「${it.rec.name}」${it.rec.version}" } ?: "已更新订阅"
+                        } catch (x: app.iduanju.core.plugin.PluginException) { x.friendly } catch (x: Exception) { x.message ?: "安装失败" }
+                    } }) { Text(if (newer) "更新 ${e.version}" else "安装") }
+                }
+            }
+            s.cms.filter { it.adult != true || unlocked }.forEach { e ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("采集站 · " + e.name, color = c.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    val added = ia.cms.sites.any { st -> runCatching { app.iduanju.core.cms.MacCMS.normalize(e.api) == st.api }.getOrDefault(false) }
+                    if (added) Text("已添加", color = c.secondary, fontSize = 12.sp)
+                    else TextButton(onClick = { scope.launch {
+                        msg = try { val st = withContext(Dispatchers.IO) { ia.cms.add(e.name, e.api, e.adult ?: false, "订阅：" + s.url) }; "已添加采集站 ${st.name}" }
+                              catch (x: Exception) { x.message ?: "添加失败" }
+                    } }) { Text("添加") }
+                }
+            }
+        }
+    }
+    msg?.let { Text(it, color = c.secondary, fontSize = 12.sp) }
+}
+
 /** iOS 插件 (idj1): install from an https .idjplugin URL or a pasted bundle; QuickJS sandbox, domain allow-list. */
 @Composable
 private fun PluginSection() {
@@ -133,18 +188,18 @@ private fun PluginSection() {
             TextButton(onClick = { store.remove(p.id) }) { Text("删除") }
         }
     }
-    OutlinedTextField(input, { input = it }, label = { Text("https://….idjplugin 或 {\"manifest\":…}") }, modifier = Modifier.fillMaxWidth(), maxLines = 4,
+    OutlinedTextField(input, { input = it }, label = { Text("插件 / manifest / 订阅 https 链接，或 {\"manifest\":…}") }, modifier = Modifier.fillMaxWidth(), maxLines = 4,
         colors = TextFieldDefaults.colors(focusedContainerColor = c.surface, unfocusedContainerColor = c.surface))
     Button(enabled = !busy && input.isNotBlank(), onClick = {
         busy = true; msg = null
         scope.launch {
             msg = try {
-                val r = withContext(Dispatchers.IO) {
-                    val t = input.trim()
-                    val text = if (t.startsWith("https://")) app.iduanju.plugin.PluginStore.download(t) else t
-                    store.install(text, if (t.startsWith("https://")) t else "paste")
+                val r = withContext(Dispatchers.IO) { store.interpret(input) }
+                input = ""
+                when (r) {
+                    is app.iduanju.plugin.PluginStore.Pasted.Plugin -> "已安装「${r.rec.name}」${r.rec.version}"
+                    is app.iduanju.plugin.PluginStore.Pasted.Subscription -> "这是订阅列表，已添加到「订阅」（${r.sub.plugins.size} 个插件 / ${r.sub.cms.size} 个采集站）"
                 }
-                input = ""; "已安装「${r.name}」${r.version}" + if (r.type == "comic") "（漫画插件：阅读器移植中）" else ""
             } catch (e: app.iduanju.core.plugin.PluginException) { e.friendly } catch (e: Exception) { e.message ?: "安装失败" }
             busy = false
         }
