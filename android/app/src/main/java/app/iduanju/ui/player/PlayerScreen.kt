@@ -174,6 +174,12 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit) {
             update = { it.resizeMode = if (fillMode) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT },
             modifier = Modifier.fillMaxSize(),
         )
+        // official danmaku (红果 only), lanes under the top bar + tech strip, never into the bottom controls
+        val epNow = detail?.episodes?.getOrNull(epIndex)
+        if (danmaku && epNow != null && seriesId.all { it.isDigit() }) {
+            val topInset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() }
+            DanmakuOverlay(player, seriesId, epNow.vid, laneTop = topInset + 44.dp + 34.dp, bottomLimit = 220.dp) { android.util.Log.i("IDJ", "danmaku: $it") }
+        }
         // gesture layer: tap = chrome, double-tap sides = ±10s, long-press = 2x, vertical swipe = prev/next episode,
         // horizontal drag = scrub.
         Box(
