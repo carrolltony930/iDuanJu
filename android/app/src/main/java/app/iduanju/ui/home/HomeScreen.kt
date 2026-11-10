@@ -141,7 +141,7 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}, onPlay
         ) {
             if (onPoster) {
                 Box(Modifier.fillMaxSize().background(Color(0xFF141A26)))
-                AsyncImage(heroCovers[sourceKey], null, Modifier.fillMaxSize().blur(48.dp), contentScale = ContentScale.Crop, alpha = 0.75f)
+                BlurBackdrop(heroCovers[sourceKey], Modifier.fillMaxSize(), 48.dp, 0.75f)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, c.bg.copy(0.35f), c.bg))))
             } else {
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(c.elevated, c.bg))))
@@ -194,6 +194,21 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}, onPlay
                 }
             }
         }
+    }
+}
+
+/**
+ * iOS blurred cover backdrop. Modifier.blur only works on API 31+; on older systems decode a tiny
+ * (16×22) thumbnail and let bilinear upscaling soften it, which reads as a heavy blur.
+ */
+@Composable
+private fun BlurBackdrop(url: String?, modifier: Modifier, radius: androidx.compose.ui.unit.Dp, alpha: Float) {
+    if (android.os.Build.VERSION.SDK_INT >= 31) {
+        AsyncImage(url, null, modifier.blur(radius), contentScale = ContentScale.Crop, alpha = alpha)
+    } else {
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+        val req = remember(url) { coil.request.ImageRequest.Builder(ctx).data(url).size(16, 22).memoryCacheKey("blur:$url").build() }
+        AsyncImage(req, null, modifier, contentScale = ContentScale.Crop, alpha = alpha, filterQuality = androidx.compose.ui.graphics.FilterQuality.High)
     }
 }
 
@@ -345,7 +360,7 @@ private fun PosterHero(board: String, picks: List<HGSeries>, index: Int, setInde
             .background(c.surface)
             .border(1.dp, c.text.copy(0.12f), RoundedCornerShape(22.dp)),
     ) {
-        AsyncImage(cur?.cover, null, Modifier.fillMaxSize().scale(1.3f).blur(36.dp), contentScale = ContentScale.Crop, alpha = 0.7f)
+        BlurBackdrop(cur?.cover, Modifier.fillMaxSize().scale(1.3f), 36.dp, 0.7f)
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color.Black.copy(0.15f), Color.Black.copy(0.55f)))))
         HorizontalPager(pager, Modifier.fillMaxSize()) { i ->
             val s = picks[i]
