@@ -3,6 +3,7 @@ kotlin { jvmToolchain(21) }
 dependencies {
     api("com.squareup.okhttp3:okhttp:4.12.0")
     api("org.json:json:20240303")
+    api("org.jsoup:jsoup:1.18.3")
     testImplementation("junit:junit:4.13.2")
 }
 tasks.test {
