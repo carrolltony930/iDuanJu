@@ -16,11 +16,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show toolchain
+      - name: Select newest Xcode
         run: |
+          ls -d /Applications/Xcode*.app || true
+          NEWEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "selected: $NEWEST"
+          sudo xcode-select -s "$NEWEST" || true
           xcodebuild -version
           swift --version
-          xcodebuild -showsdks | head -20
+          xcodebuild -showsdks | grep -i iphoneos || true
 
       - name: Install XcodeGen
         run: brew install xcodegen
