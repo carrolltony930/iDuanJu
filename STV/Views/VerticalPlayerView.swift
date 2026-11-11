@@ -232,7 +232,15 @@ struct PlayerScreen: View {
             Button("好") { co.pipError = nil }
         } message: { Text(co.pipError ?? "") }
         .onAppear { OrientationGate.unlock() }
-        .onDisappear { co.teardown(); adjuster.restoreBrightness(); OrientationGate.lockPortrait() }
+        .onDisappear {
+            // iOS 17：视图正在 pop 时同步改 @State/Observable 属性会触发 SwiftUI 崩溃。
+            // 延后到下一个 main runloop，等视图树拆完再停播放器、恢复亮度、锁回竖屏。
+            DispatchQueue.main.async {
+                co.teardown()
+                adjuster.restoreBrightness()
+                OrientationGate.lockPortrait()
+            }
+        }
         .onChange(of: co.current) { _, _ in scrubbing = false; flashChrome() }
         .onChange(of: co.readyIndex) { _, index in if index != nil { flashChrome() } }
         .onChange(of: landscape) { _, l in if !l { locked = false }; panel = nil }
@@ -293,7 +301,6 @@ struct PlayerScreen: View {
         .scrollIndicators(.hidden)
         .scrollPosition(id: Binding(get: { co.current }, set: { co.select($0) }))
         .feedScrollTracking(onY: { feedScrollY = $0 }, onSettled: { feedSettled = $0; releaseHeldIfSettled() })
-        .sensoryFeedback(.selection, trigger: co.current)
         .onChange(of: co.readyIndex) { _, _ in releaseHeldIfSettled() }
         .onChange(of: co.current) { old, new in
             if old != nil, let new, co.episodes.indices.contains(new) { showOSD("第\(co.episodes[new].ep)集") }
@@ -751,9 +758,10 @@ struct PlayerScreen: View {
     private let edgeBackWidth: CGFloat = 36
 
     private func enterSpeedMode() {
-        let base = co.lockedRate ?? co.playbackRate
-        previewRate = base
-        speedBaseIndex = PlaybackCoordinator.stepIndex(of: base)
+        // 长按即进入 2.0x（受内核上限约束），不再从当前 1.0x 起步。
+        let quick = min(2.0, co.engine.maxRate)
+        previewRate = quick
+        speedBaseIndex = PlaybackCoordinator.stepIndex(of: quick)
         lastStepOffset = 0
         pendingLock = false
         pendingCancel = false
@@ -784,7 +792,8 @@ struct PlayerScreen: View {
             if offset != lastStepOffset {
                 lastStepOffset = offset
                 let top = PlaybackCoordinator.rateSteps.lastIndex { $0 <= co.engine.maxRate + 0.001 } ?? PlaybackCoordinator.rateSteps.count - 1
-                let idx = max(0, min(top, speedBaseIndex + offset))
+                // 只往前滑升档（2.5x / 3.0x）；往后滑不降到 2.0x 以下。
+                let idx = max(speedBaseIndex, min(top, speedBaseIndex + max(0, offset)))
                 let next = PlaybackCoordinator.rateSteps[idx]
                 if next != previewRate {
                     previewRate = next
