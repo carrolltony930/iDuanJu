@@ -167,13 +167,11 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     func start() {
         guard observer == nil else { return }
         let player = av.player
-        let session = MPNowPlayingSession(players: [player])
-        session.automaticallyPublishesNowPlayingInfo = true
-        nowPlaying = session
-        let commands = session.remoteCommandCenter
-        commands.playCommand.addTarget(self, action: #selector(remotePlay))
-        commands.pauseCommand.addTarget(self, action: #selector(remotePause))
-        commands.togglePlayPauseCommand.addTarget(self, action: #selector(remoteToggle))
+        // No MPNowPlayingSession and no remote commands: publishing Now Playing info is what
+        // makes iOS treat STV as the "Now Playing app" and light up the Dynamic Island, the
+        // Lock Screen and Control Center. The user asked for the island to stay quiet, so we
+        // deliberately publish nothing. Audio playback itself (AVAudioSession .playback) is unaffected.
+        nowPlaying = nil
         let center = NotificationCenter.default
         audioObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
             MainActor.assumeIsolated { self?.handleInterruption(note) }
@@ -198,28 +196,19 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         RunLoop.main.add(t, forMode: .common)
         timer = t
         observer = t
-        registerSharedCommands()
+        // registerSharedCommands() intentionally not called (no Now Playing presence).
     }
 
-    /// Lock-screen / headset commands while Aether plays (AVPlayer's own MPNowPlayingSession covers the fallback).
+    /// Disabled on purpose. Registering MPRemoteCommandCenter handlers or publishing
+    /// Now Playing metadata makes iOS show the playback badge on the Dynamic Island.
     private func registerSharedCommands() {
-        guard !sharedCommandsRegistered else { return }
-        sharedCommandsRegistered = true
-        let c = MPRemoteCommandCenter.shared()
-        c.playCommand.addTarget(self, action: #selector(remotePlay))
-        c.pauseCommand.addTarget(self, action: #selector(remotePause))
-        c.togglePlayPauseCommand.addTarget(self, action: #selector(remoteToggle))
+        // no-op
     }
 
+    /// Deliberately clears instead of publishing. Publishing Now Playing metadata is exactly
+    /// what makes the Dynamic Island / Lock Screen / Control Center show a media card.
     private func publishNowPlaying() {
-        guard engineKind == .aether, let i = readyIndex, episodes.indices.contains(i) else { return }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
-            MPMediaItemPropertyTitle: detail?.title ?? series.title,
-            MPMediaItemPropertyAlbumTitle: series.source.isLongVideo ? series.source.label : "第\(episodes[i].ep)集",
-            MPMediaItemPropertyPlaybackDuration: duration,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: time,
-            MPNowPlayingInfoPropertyPlaybackRate: paused ? 0.0 : playbackRate,
-        ]
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     private func activateAudioSession() {
@@ -245,15 +234,11 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         endObserver = nil
         audioObservers.forEach(NotificationCenter.default.removeObserver)
         audioObservers.removeAll()
-        if let commands = nowPlaying?.remoteCommandCenter {
-            [commands.playCommand, commands.pauseCommand, commands.togglePlayPauseCommand].forEach { $0.removeTarget(self) }
-        }
-        if sharedCommandsRegistered {
-            let c = MPRemoteCommandCenter.shared()
-            [c.playCommand, c.pauseCommand, c.togglePlayPauseCommand].forEach { $0.removeTarget(self) }
-            sharedCommandsRegistered = false
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        }
+        // Always keep the system's Now Playing slot clear so the Dynamic Island stays quiet.
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        let c = MPRemoteCommandCenter.shared()
+        [c.playCommand, c.pauseCommand, c.togglePlayPauseCommand].forEach { $0.removeTarget(self) }
+        sharedCommandsRegistered = false
         nowPlaying = nil
         if pip?.isPictureInPictureActive == true {
             pip?.stopPictureInPicture()
@@ -517,7 +502,8 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
                     let next = episodes.indices.filter { $0 > i && $0 <= i + 3 }.map { episodes[$0].vid }
                     Task { await HongguoClient.shared.prefetch(vids: next) }
                 }
-                if engineKind == .avplayer { _ = await nowPlaying?.becomeActiveIfPossible() } else { publishNowPlaying() }
+                // No Now Playing activation / publishing (Dynamic Island stays quiet).
+                publishNowPlaying()
             } catch {
                 guard activation == token else { return }
                 errors[i] = error.localizedDescription
