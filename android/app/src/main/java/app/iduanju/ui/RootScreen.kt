@@ -17,6 +17,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import dev.chrisbanes.haze.hazeSource
 import app.iduanju.ui.category.CategoryScreen
 import app.iduanju.ui.components.GlassTabBar
 import app.iduanju.ui.detail.DetailScreen
@@ -37,6 +38,8 @@ fun RootScreen(initialRoute: String? = null) {
     val back = nav.currentBackStackEntryAsState().value
     val route = back?.destination?.route ?: "home"
     val atRoot = route in setOf("home", "search", "category", "profile")
+    /** Backdrop for the floating tab bar's blur (Haze): everything the NavHost draws. */
+    val haze = androidx.compose.runtime.remember { dev.chrisbanes.haze.HazeState() }
 
     Box(Modifier.fillMaxSize()) {
         // "home/<source>" (我的 → Telegram 频道 / 漫画) switches to the 首页 tab and shows that source page.
@@ -48,7 +51,7 @@ fun RootScreen(initialRoute: String? = null) {
             } else nav.navigate(r)
         }
         androidx.compose.runtime.CompositionLocalProvider(LocalNavigate provides navigate) {
-            NavHost(nav, startDestination = "home", modifier = Modifier.fillMaxSize()) {
+            NavHost(nav, startDestination = "home", modifier = Modifier.fillMaxSize().hazeSource(haze)) {
                 composable("home") { HomeScreen(onOpenDetail = { nav.navigate("detail/$it") }, onSearch = { nav.navigate("search") }, onPlay = { nav.navigate("player/$it/0") }, onOpenManga = { nav.navigate("manga/" + android.net.Uri.encode(it)) }) }
                 composable("search") { SearchScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
                 composable("category") { CategoryScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
@@ -105,6 +108,7 @@ fun RootScreen(initialRoute: String? = null) {
                         restoreState = true
                     }
                 },
+                haze = haze,
                 modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 4.dp),
             )
         }

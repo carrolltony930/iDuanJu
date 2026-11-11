@@ -77,7 +77,8 @@ fun DetailScreen(seriesId: String, onBack: () -> Unit, onPlay: (String, Int) -> 
             Box(Modifier.fillMaxWidth().height(440.dp), contentAlignment = Alignment.BottomCenter) {
                 AsyncImage(d?.cover, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-                    0f to Color.Black.copy(0.25f), 0.3f to Color.Transparent, 0.62f to Color.Black.copy(0.35f), 0.86f to c.bg.copy(0.85f), 1f to c.bg)))
+                    // iOS DramaDetailView: dark scrim behind the white title / meta, then a short fade into the page colour
+                    0f to Color.Black.copy(0.25f), 0.3f to Color.Transparent, 0.9f to Color.Black.copy(0.62f), 1f to c.bg)))
                 Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 44.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(d?.title ?: "", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                         maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 41.sp)

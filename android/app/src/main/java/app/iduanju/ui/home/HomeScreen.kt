@@ -386,9 +386,11 @@ private fun PosterHero(board: String, picks: List<HGSeries>, index: Int, setInde
     ) {
         BlurBackdrop(cur?.cover, Modifier.fillMaxSize().scale(1.3f), 36.dp, 0.7f)
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color.Black.copy(0.15f), Color.Black.copy(0.55f)))))
+        // Each page fades with its distance from centre (iOS TabView page style shows one card at a time;
+        // without this the neighbouring page's title / chips slide into view inside the card while swiping).
         HorizontalPager(pager, Modifier.fillMaxSize()) { i ->
             val s = picks[i]
-            Row(Modifier.fillMaxSize().clickable { onOpen(s.seriesId) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - kotlin.math.abs(pager.getOffsetDistanceInPages(i)).coerceIn(0f, 1f) * 1.6f }.clickable { onOpen(s.seriesId) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(147.dp, 196.dp).shadow(12.dp, RoundedCornerShape(12.dp)).clip(RoundedCornerShape(12.dp)).background(c.elevated)) {
                     AsyncImage(s.cover, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     HomeFmt.progress(s)?.let { HomeBadge(it, Modifier.align(Alignment.BottomEnd).padding(6.dp)) }

@@ -16,19 +16,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.chrisbanes.haze.hazeEffect
 import app.iduanju.ui.theme.IdjThemeColors
 
 @Composable
 fun GlassCapsule(
     modifier: Modifier = Modifier,
+    haze: dev.chrisbanes.haze.HazeState? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
     val c = IdjThemeColors
+    // iOS .ultraThinMaterial + surface 55%: real backdrop blur on API 31+ (Haze), translucent fallback below.
+    val blur = haze != null && android.os.Build.VERSION.SDK_INT >= 31
     Row(
         modifier
             .shadow(18.dp, RoundedCornerShape(percent = 50), ambientColor = Color.Black.copy(0.18f), spotColor = Color.Black.copy(0.18f))
             .clip(RoundedCornerShape(percent = 50))
-            .background(c.surface.copy(alpha = 0.85f))
+            .then(if (blur) Modifier.hazeEffect(haze!!, dev.chrisbanes.haze.HazeStyle(c.surface, emptyList(), 24.dp, noiseFactor = 0f)) else Modifier)
+            .background(c.surface.copy(alpha = if (blur) 0.55f else 0.92f))
             .border(
                 0.8.dp,
                 Brush.verticalGradient(listOf(c.text.copy(0.18f), c.text.copy(0.05f))),
@@ -45,11 +50,12 @@ fun GlassTabBar(
     selected: Int,
     items: List<Pair<String, @Composable (Boolean) -> Unit>>,
     onSelect: (Int) -> Unit,
+    haze: dev.chrisbanes.haze.HazeState? = null,
     modifier: Modifier = Modifier,
 ) {
     val c = IdjThemeColors
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        GlassCapsule(Modifier.widthIn(max = 400.dp).fillMaxWidth().padding(horizontal = 16.dp)) {
+        GlassCapsule(Modifier.widthIn(max = 400.dp).fillMaxWidth().padding(horizontal = 16.dp), haze = haze) {
             items.forEachIndexed { i, (label, icon) ->
                 val on = i == selected
                 Box(

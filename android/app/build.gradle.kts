@@ -51,6 +51,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     // OkHttp (HTTP/2) for player requests: some CDNs behind Cloudflare 403 HttpURLConnection (HTTP/1.1 only)
     implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
+    // Haze (Apache-2.0): backdrop blur for the floating tab bar, like iOS .ultraThinMaterial
+    implementation("dev.chrisbanes.haze:haze:1.5.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("wang.harlon.quickjs:wrapper-android:3.2.3")
     debugImplementation("androidx.compose.ui:ui-tooling")
