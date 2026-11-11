@@ -1,0 +1,60 @@
+name: Build iOS 17 IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build iOS 17 Unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcodebuild -showsdks | head -20
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Resolve packages
+        run: xcodebuild -resolvePackageDependencies -project STV.xcodeproj -scheme STV
+
+      - name: Build unsigned
+        run: |
+          set -o pipefail
+          xcodebuild -project STV.xcodeproj -scheme STV -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log
+
+      - name: Package IPA
+        run: |
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          echo "APP=$APP"
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist" || true
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry STV-ios17-unsigned.ipa Payload
+          ls -lh STV-ios17-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: STV-ios17-unsigned
+          path: STV-ios17-unsigned.ipa
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
