@@ -348,15 +348,15 @@ struct PlayerScreen: View {
                     onAdjustBegan: { adjuster.begin($0) },
                     onAdjustChanged: { adjuster.change($0, fraction: $1) },
                     onAdjustEnded: { adjuster.end() },
-                    onSeekBegan: beginHorizontalSeek,
-                    onSeekChanged: updateHorizontalSeek,
-                    onSeekEnded: endHorizontalSeek,
                     onPinchFill: { fill in
                         guard fill != fillScreen else { return }
                         withAnimation(.easeInOut(duration: 0.25)) { fillScreen = fill }
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         showOSD(fill ? "画面：铺满全屏" : "画面：完整自适应")
-                    }
+                    },
+                    onSeekBegan: beginHorizontalSeek,
+                    onSeekChanged: updateHorizontalSeek,
+                    onSeekEnded: endHorizontalSeek
                 )
             } else {
                 // Held still on the episode being left; the new episode's page stays see-through so the video
