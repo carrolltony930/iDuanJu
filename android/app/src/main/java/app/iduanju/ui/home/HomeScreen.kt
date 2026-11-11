@@ -122,6 +122,10 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}, onPlay
     val pages: List<Any> = listOf<Any>(HomeSource.hongguo, HomeSource.huangguo, HomeSource.ai) + sites + plugins + listOf(HomeSource.channels, HomeSource.manga)
     val labels = pages.map { when (it) { is HomeSource -> it.label; is app.iduanju.core.cms.CMSSite -> it.name; else -> (it as app.iduanju.plugin.PluginStore.Installed).name } }
     val pager = rememberPagerState { pages.size }
+    LaunchedEffect(HomeJump.label, pages.size) {
+        val i = labels.indexOf(HomeJump.label ?: return@LaunchedEffect)
+        if (i >= 0) { pager.scrollToPage(i); HomeJump.label = null }
+    }
     val scope = rememberCoroutineScope()
     val heroCovers = remember { mutableStateMapOf<String, String>() }
     val source = pages[pager.currentPage.coerceIn(0, pages.size - 1)]
@@ -135,9 +139,9 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}, onPlay
             Modifier.fillMaxWidth().height(420.dp)
                 .graphicsLayer { alpha = 0.99f }
                 .drawWithContent {
-                    drawContent()
-                    drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.6f to Color.Transparent, 1f to c.bg))
-                },
+                drawContent()
+                drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.6f to Color.Transparent, 1f to c.bg))
+            },
         ) {
             if (onPoster) {
                 Box(Modifier.fillMaxSize().background(Color(0xFF141A26)))
@@ -231,6 +235,8 @@ private fun BlurBackdrop(url: String?, modifier: Modifier, radius: androidx.comp
 
 /** Sub-tab chosen from the 频道 sheet, per home page label. */
 object HomeSubSel { val map = androidx.compose.runtime.mutableStateMapOf<String, Int>() }
+/** One-shot request from another tab (我的 → Telegram 频道 / 漫画) to show a home source page. */
+object HomeJump { var label by androidx.compose.runtime.mutableStateOf<String?>(null) }
 
 /** iOS HomeChannelSheet: 「频道」 title + 完成, one section per page with its sub-channels as a 3-column grid of chips. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -264,7 +270,7 @@ private fun ChannelSheet(pages: List<Any>, labels: List<String>, current: Int, o
                             val si = subs.indexOf(t)
                             val on = pi == current && (HomeSubSel.map[labels[pi]] ?: 0) == si
                             Box(Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(10.dp)).background(if (on) c.accent.copy(0.16f) else c.text.copy(0.07f))
-                                .clickable { onPick(pi, if (p is HomeSource && p != HomeSource.huangguo) si else null) }, contentAlignment = Alignment.Center) {
+                                    .clickable { onPick(pi, if (p is HomeSource && p != HomeSource.huangguo) si else null) }, contentAlignment = Alignment.Center) {
                                 Text(t, color = if (on) c.accent else c.text, fontSize = 15.sp, maxLines = 1)
                             }
                         }
@@ -389,34 +395,34 @@ private fun PosterHero(board: String, picks: List<HGSeries>, index: Int, setInde
                 }
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f).fillMaxHeight().padding(vertical = 2.dp)) {
-                  Column(Modifier.weight(1f).fillMaxWidth()) {
-                    Text(if (board.isEmpty()) "TOP ${i + 1}" else "$board · TOP ${i + 1}", color = c.accentWarm, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 0.6.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text(s.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 23.sp)
-                    val chips = s.tags.take(3)
-                    if (chips.isNotEmpty()) {
+                    Column(Modifier.weight(1f).fillMaxWidth()) {
+                        Text(if (board.isEmpty()) "TOP ${i + 1}" else "$board · TOP ${i + 1}", color = c.accentWarm, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 0.6.sp)
                         Spacer(Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            chips.forEach {
-                                Box(Modifier.height(20.dp).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(0.14f)).padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
-                                    Text(it, color = Color.White.copy(0.9f), fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        Text(s.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 23.sp)
+                        val chips = s.tags.take(3)
+                        if (chips.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                chips.forEach {
+                                    Box(Modifier.height(20.dp).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(0.14f)).padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
+                                        Text(it, color = Color.White.copy(0.9f), fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                    }
                                 }
                             }
                         }
+                        val line = HomeFmt.metaLine(s)
+                        if (line.isNotEmpty()) { Spacer(Modifier.height(6.dp)); Text(line, color = Color.White.copy(0.72f), fontSize = 12.sp, maxLines = 1) }
+                        val blurb = s.subtitle?.trim()
+                        if (!blurb.isNullOrEmpty() && blurb != HomeFmt.progress(s)) {
+                            Spacer(Modifier.height(6.dp))
+                            // blurb yields height first so the CTA never gets clipped on long titles
+                            var fitsOneLine by remember(blurb) { mutableStateOf(true) }
+                            Text(blurb, color = Color.White.copy(if (fitsOneLine) 0.66f else 0f), fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                                // hide instead of showing a half-clipped line when the title wraps to two lines
+                                onTextLayout = { r -> fitsOneLine = r.lineCount > 0 && r.getLineBottom(0) <= r.size.height + 0.5f })
+                        }
                     }
-                    val line = HomeFmt.metaLine(s)
-                    if (line.isNotEmpty()) { Spacer(Modifier.height(6.dp)); Text(line, color = Color.White.copy(0.72f), fontSize = 12.sp, maxLines = 1) }
-                    val blurb = s.subtitle?.trim()
-                    if (!blurb.isNullOrEmpty() && blurb != HomeFmt.progress(s)) {
-                        Spacer(Modifier.height(6.dp))
-                        // blurb yields height first so the CTA never gets clipped on long titles
-                        var fitsOneLine by remember(blurb) { mutableStateOf(true) }
-                        Text(blurb, color = Color.White.copy(if (fitsOneLine) 0.66f else 0f), fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                            // hide instead of showing a half-clipped line when the title wraps to two lines
-                            onTextLayout = { r -> fitsOneLine = r.lineCount > 0 && r.getLineBottom(0) <= r.size.height + 0.5f })
-                    }
-                  }
                     Spacer(Modifier.height(6.dp))
                     Row(
                         Modifier.height(32.dp).clip(RoundedCornerShape(50)).background(Color.White).padding(horizontal = 14.dp),

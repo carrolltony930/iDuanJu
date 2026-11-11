@@ -39,41 +39,53 @@ fun RootScreen(initialRoute: String? = null) {
     val atRoot = route in setOf("home", "search", "category", "profile")
 
     Box(Modifier.fillMaxSize()) {
-        androidx.compose.runtime.CompositionLocalProvider(LocalNavigate provides { r: String -> nav.navigate(r) }) {
-        NavHost(nav, startDestination = "home", modifier = Modifier.fillMaxSize()) {
-            composable("home") { HomeScreen(onOpenDetail = { nav.navigate("detail/$it") }, onSearch = { nav.navigate("search") }, onPlay = { nav.navigate("player/$it/0") }, onOpenManga = { nav.navigate("manga/" + android.net.Uri.encode(it)) }) }
-            composable("search") { SearchScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
-            composable("category") { CategoryScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
-            composable("library/{kind}") { e -> app.iduanju.ui.library.LibraryListScreen(e.arguments!!.getString("kind")!!, onBack = { nav.popBackStack() }, onOpenDetail = { nav.navigate("detail/$it") }) }
-            composable("profile") { ProfileScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
-            composable("detail/{sid}", arguments = listOf(navArgument("sid") { type = NavType.StringType })) { e ->
-                val sid = e.arguments!!.getString("sid")!!
-                DetailScreen(
-                    seriesId = sid,
-                    onBack = { nav.popBackStack() },
-                    onPlay = { s, ep -> nav.navigate("player/$s/$ep") },
-                    onOpenSeries = { nav.navigate("detail/$it") },
-                )
-            }
-            composable("manga/{id}") { e -> app.iduanju.manga.MangaDetailScreen(e.arguments!!.getString("id")!!, onBack = { nav.popBackStack() },
-                onRead = { id, i, p -> nav.navigate("mangaRead/" + android.net.Uri.encode(id) + "/$i/$p") }) }
-            composable("mangaRead/{id}/{i}/{p}", arguments = listOf(navArgument("i") { type = NavType.IntType }, navArgument("p") { type = NavType.IntType })) { e ->
-                app.iduanju.manga.MangaReaderScreen(e.arguments!!.getString("id")!!, e.arguments!!.getInt("i"), e.arguments!!.getInt("p"), onBack = { nav.popBackStack() }) }
-            composable(
-                "player/{sid}/{ep}",
-                arguments = listOf(
-                    navArgument("sid") { type = NavType.StringType },
-                    navArgument("ep") { type = NavType.IntType },
-                ),
-            ) { e ->
-                PlayerScreen(
-                    seriesId = e.arguments!!.getString("sid")!!,
-                    startEp = e.arguments!!.getInt("ep"),
-                    onBack = { nav.popBackStack() },
-                    onSwitchSeries = { sid -> nav.navigate("player/$sid/0") { popUpTo("player/{sid}/{ep}") { inclusive = true } } },
-                )
-            }
+        // "home/<source>" (我的 → Telegram 频道 / 漫画) switches to the 首页 tab and shows that source page.
+        val navigate: (String) -> Unit = { r ->
+            if (r.startsWith("home/")) {
+                app.iduanju.ui.home.HomeJump.label = mapOf("channels" to "频道", "manga" to "漫画")[r.removePrefix("home/")]
+                tab = 0
+                nav.navigate("home") { popUpTo(nav.graph.startDestinationId) { saveState = true }; launchSingleTop = true; restoreState = true }
+            } else nav.navigate(r)
         }
+        androidx.compose.runtime.CompositionLocalProvider(LocalNavigate provides navigate) {
+            NavHost(nav, startDestination = "home", modifier = Modifier.fillMaxSize()) {
+                composable("home") { HomeScreen(onOpenDetail = { nav.navigate("detail/$it") }, onSearch = { nav.navigate("search") }, onPlay = { nav.navigate("player/$it/0") }, onOpenManga = { nav.navigate("manga/" + android.net.Uri.encode(it)) }) }
+                composable("search") { SearchScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
+                composable("category") { CategoryScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
+                composable("library/{kind}") { e -> app.iduanju.ui.library.LibraryListScreen(e.arguments!!.getString("kind")!!, onBack = { nav.popBackStack() }, onOpenDetail = { nav.navigate("detail/$it") }) }
+                composable("profile") { ProfileScreen(onOpenDetail = { nav.navigate("detail/$it") }) }
+                composable("sources") { app.iduanju.ui.profile.SourcesScreen(onBack = { nav.popBackStack() }) }
+                composable("plugins") { app.iduanju.ui.profile.PluginsScreen(onBack = { nav.popBackStack() }) }
+                composable("licenses") { app.iduanju.ui.profile.LicensesScreen(onBack = { nav.popBackStack() }) }
+                composable("actorRank") { app.iduanju.ui.profile.ActorRankPlaceholder(onBack = { nav.popBackStack() }) }
+                composable("detail/{sid}", arguments = listOf(navArgument("sid") { type = NavType.StringType })) { e ->
+                    val sid = e.arguments!!.getString("sid")!!
+                    DetailScreen(
+                        seriesId = sid,
+                        onBack = { nav.popBackStack() },
+                        onPlay = { s, ep -> nav.navigate("player/$s/$ep") },
+                        onOpenSeries = { nav.navigate("detail/$it") },
+                    )
+                }
+                composable("manga/{id}") { e -> app.iduanju.manga.MangaDetailScreen(e.arguments!!.getString("id")!!, onBack = { nav.popBackStack() },
+                        onRead = { id, i, p -> nav.navigate("mangaRead/" + android.net.Uri.encode(id) + "/$i/$p") }) }
+                composable("mangaRead/{id}/{i}/{p}", arguments = listOf(navArgument("i") { type = NavType.IntType }, navArgument("p") { type = NavType.IntType })) { e ->
+                    app.iduanju.manga.MangaReaderScreen(e.arguments!!.getString("id")!!, e.arguments!!.getInt("i"), e.arguments!!.getInt("p"), onBack = { nav.popBackStack() }) }
+                composable(
+                    "player/{sid}/{ep}",
+                    arguments = listOf(
+                        navArgument("sid") { type = NavType.StringType },
+                        navArgument("ep") { type = NavType.IntType },
+                    ),
+                ) { e ->
+                    PlayerScreen(
+                        seriesId = e.arguments!!.getString("sid")!!,
+                        startEp = e.arguments!!.getInt("ep"),
+                        onBack = { nav.popBackStack() },
+                        onSwitchSeries = { sid -> nav.navigate("player/$sid/0") { popUpTo("player/{sid}/{ep}") { inclusive = true } } },
+                    )
+                }
+            }
 
         }
         if (atRoot) {
