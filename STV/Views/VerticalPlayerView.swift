@@ -189,7 +189,7 @@ struct PlayerScreen: View {
                             .position(x: full.width / 2, y: (landscape ? 24 : ins.top + 64) + 30)
                             .transition(.opacity).allowsHitTesting(false)
                     }
-                    HiddenVolumeView(adjuster: adjuster).frame(width: 1, height: 1).allowsHitTesting(false)
+                    // Native iOS volume HUD is used instead (see PlayerAdjust.swift).
                     if speedMode {
                         PlayerSpeedHUD(rate: previewRate, pendingLock: pendingLock, pendingCancel: pendingCancel,
                                        hasLockedRate: co.lockedRate != nil)
