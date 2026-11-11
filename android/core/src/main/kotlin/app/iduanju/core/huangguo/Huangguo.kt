@@ -91,7 +91,8 @@ class HuangguoClient(private val dir: File? = null, private val prefs: MutableMa
             HuangguoChannel(HuangguoSub.ai, "hot", "热播榜", true), HuangguoChannel(HuangguoSub.ai, "rank-recommend", "推荐榜", true),
             HuangguoChannel(HuangguoSub.ai, "potential", "潜力榜", true), HuangguoChannel(HuangguoSub.ai, "ai-duanju", "AI短剧"),
             HuangguoChannel(HuangguoSub.ai, "ai-manju", "AI漫剧"), HuangguoChannel(HuangguoSub.ai, "ai-mogai", "AI魔改"))
-        val videoChannels = listOf("全部", "分类一", "分类二", "分类三", "分类四").mapIndexed { i, t -> HuangguoChannel(HuangguoSub.video, "$i", t) }
+        // huangguo.video ?category=1…4 (site nav, 2026-11-10)
+        val videoChannels = listOf("全部", "MV/音乐剧", "短片", "连续剧", "片段").mapIndexed { i, t -> HuangguoChannel(HuangguoSub.video, "$i", t) }
 
         fun isHuangguo(id: String) = id.startsWith("huangguo:")
         fun sid(sub: HuangguoSub, ref: String) = "huangguo:${sub.name}:" + ref.replace("/", "~")

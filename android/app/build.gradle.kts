@@ -49,6 +49,8 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.5.1")
     implementation("androidx.media3:media3-session:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
+    // OkHttp (HTTP/2) for player requests: some CDNs behind Cloudflare 403 HttpURLConnection (HTTP/1.1 only)
+    implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("wang.harlon.quickjs:wrapper-android:3.2.3")
     debugImplementation("androidx.compose.ui:ui-tooling")

@@ -77,7 +77,9 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit, onSwitchSer
     var tags by remember { mutableStateOf(TechTags()) }
     var retry by remember { mutableIntStateOf(0) }
 
-    val httpFactory = remember { androidx.media3.datasource.DefaultHttpDataSource.Factory().setUserAgent(app.iduanju.core.cms.MacCMS.UA).setAllowCrossProtocolRedirects(true) }
+    // OkHttp (HTTP/2) like iOS URLSession: huangguo.video's Cloudflare 403s HTTP/1.1 (HttpURLConnection),
+    // which made every 黄果 视频站 segment request fail with ERROR_CODE_IO_BAD_HTTP_STATUS.
+    val httpFactory = remember { androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(EpisodeCache.http).setUserAgent(app.iduanju.core.cms.MacCMS.UA) }
     val player = remember {
         ExoPlayer.Builder(ctx).setMediaSourceFactory(
             androidx.media3.exoplayer.source.DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(ctx, httpFactory))
