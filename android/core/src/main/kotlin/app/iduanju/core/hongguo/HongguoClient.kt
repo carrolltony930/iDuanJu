@@ -43,8 +43,10 @@ class HongguoClient(
     init { HGDetailExtras.parser = this }
 
     @Volatile private var device: HGDevice? = null
-    /** Diagnostics: which identity served the last successful pure resolve (override / oneshot / mint). */
+    /** Diagnostics: which identity served the last successful pure resolve (override / registered / mint). */
     @Volatile var lastPureRoute: String = ""
+    /** Pure-profile device registered this session (memory only; see resolveFresh). */
+    @Volatile private var registeredPure: HGOneShotDevice.Identity? = null
     private val vmDeviceId = vmID()
     private val vmInstallId = vmID()
     private val resolveCache = LinkedHashMap<String, Pair<HGResolvedVideo, Long>>()
@@ -470,22 +472,24 @@ class HongguoClient(
         var soft = false
         val hasOverride = HGPlayerDevice.overrideProvider?.invoke()?.let { it.first.isNotEmpty() && it.second.isNotEmpty() } == true
         if (!hasOverride && HGOneShotDevice.enabled) {
-            // No override: a locally minted device is soft-rejected from its first request, a fresh
-            // pure-profile registration is served once. Spend one registration per level.
-            // probe 2026-11-11: 11/12 fresh registrations served at a 6 s gap → allow one retry per level.
+            // No override: a locally minted (never registered) device is soft-rejected. With the Argus 551 /
+            // Ladon signer (HGPlaybackSign) one pure-profile registration keeps serving consecutive episodes
+            // (live 2026-11-10: PPPPPPPP), so register once, reuse it, and re-register only when rejected.
             levels@ for (level in listOf(3, 4)) {
                 for (attempt in 0 until 2) {
-                    val ids = HGOneShotDevice.register(http) ?: run { System.err.println("[HG] oneshot register failed"); null } ?: break@levels
+                    val ids = registeredPure ?: HGOneShotDevice.register(http)?.also { registeredPure = it }
+                        ?: run { System.err.println("[HG] pure device register failed"); null } ?: break@levels
                     try {
                         val r = resolvePure(vid, level, ids)
                         if (r.err == BYTEVC2 && level == 3) continue@levels
-                        lastPureRoute = "oneshot"
+                        lastPureRoute = "registered"
                         return r
                     } catch (_: PlayerEmptyBody) {
-                        soft = true; System.err.println("[HG] oneshot pure empty level=$level attempt=$attempt")
+                        soft = true; registeredPure = null
+                        System.err.println("[HG] registered device rejected level=$level attempt=$attempt → re-register")
                         Thread.sleep(800)
                     } catch (e: Exception) {
-                        System.err.println("[HG] oneshot pure error level=$level: $e"); break
+                        System.err.println("[HG] registered pure error level=$level: $e"); break
                     }
                 }
             }
@@ -559,20 +563,32 @@ class HongguoClient(
     }
 
     /**
+     * Signed POST for the pure video_model endpoint, same as iOS `resolvePure`: the exact wire query
+     * (pairs + ts + _rticket) and body are signed with Argus 551 / Ladon only (HGPlaybackSign).
+     * The legacy Gorgon / Medusa / Helios set is soft-rejected here (HTTP 200 + 0 bytes).
+     */
+    private fun pureRequest(body: ByteArray, pairs: List<Pair<String, String>>): Request {
+        val nowMs = nowMs()
+        val ts = (nowMs / 1000).toUInt()
+        val q = HGPlayerSign.encodeQuery(pairs + listOf("ts" to ts.toString(), "_rticket" to nowMs.toString()))
+        val rb = Request.Builder().url("https://$PURE_HOST$PURE_PATH?$q")
+            .post(body.toRequestBody("application/json; charset=UTF-8".toMediaType()))
+            .header("Content-Type", "application/json; charset=UTF-8").header("Accept", "application/json")
+        for ((k, v) in HGPlaybackSign.headers(q, body, ts)) if (v.isNotEmpty()) rb.header(k, v)
+        rb.header("User-Agent", PURE_UA).header("x-ss-dp", "8662").header("lc", "101")
+            .header("x-reading-request", "$nowMs-${(nowMs * 1_000_000L) and 0x7fffffff}")
+        return rb.build()
+    }
+
+    /**
      * Diagnostics only (soft-reject research): one pure video_model request for an explicit identity.
      * Returns "P" (video_model present), "F" (HTTP 200 + 0 bytes soft reject), "C<code>", "H<status>" or "E".
      */
     fun probePure(vid: String, level: Int, did: String, iid: String, cdid: String? = null, openudid: String? = null): String {
         val body = J.encodeSorted(mapOf("video_id" to vid, "biz_param" to mapOf(
             "video_id_type" to 0, "need_all_video_definition" to true, "video_platform" to 3, "device_level" to level)))
-        val nowMs = nowMs()
-        val (q, headers) = HGPlayerSign.signPOST(PURE_PATH, purePlayerPairs(did, iid, cdid, openudid), nowMs, did, PURE_VN, body)
-        val rb = Request.Builder().url("https://$PURE_HOST$PURE_PATH?$q").post(body.toRequestBody("application/json; charset=UTF-8".toMediaType()))
-        for ((k, v) in headers) if (v.isNotEmpty()) rb.header(k, v)
-        rb.header("User-Agent", PURE_UA).header("x-ss-dp", "8662").header("lc", "101")
-            .header("x-reading-request", "$nowMs-${(nowMs * 1_000_000L) and 0x7fffffff}")
         return try {
-            playerHttp.newCall(rb.build()).execute().use { resp ->
+            playerHttp.newCall(pureRequest(body, purePlayerPairs(did, iid, cdid, openudid))).execute().use { resp ->
                 val data = resp.body?.bytes() ?: ByteArray(0)
                 when {
                     resp.code != 200 -> "H${resp.code}"
@@ -600,16 +616,9 @@ class HongguoClient(
         var last: Exception = PlayerEmptyBody()
         for (attempt in 0 until (if (ids != null) 1 else 2)) {
             if (attempt > 0) Thread.sleep(500)
-            val nowMs = nowMs()
             val (did, iid) = ids?.let { it.did to it.iid } ?: purePlayerIds()
-            val (q, headers) = HGPlayerSign.signPOST(PURE_PATH, purePlayerPairs(did, iid, ids?.cdid, ids?.openudid), nowMs, did, PURE_VN, body)
-            val rb = Request.Builder().url("https://$PURE_HOST$PURE_PATH?$q")
-                .post(body.toRequestBody("application/json; charset=UTF-8".toMediaType()))
-            for ((k, v) in headers) if (v.isNotEmpty()) rb.header(k, v)
-            rb.header("User-Agent", PURE_UA).header("x-ss-dp", "8662").header("lc", "101")
-                .header("x-reading-request", "$nowMs-${(nowMs * 1_000_000L) and 0x7fffffff}")
             try {
-                playerHttp.newCall(rb.build()).execute().use { resp ->
+                playerHttp.newCall(pureRequest(body, purePlayerPairs(did, iid, ids?.cdid, ids?.openudid))).execute().use { resp ->
                     val status = resp.code
                     val data = resp.body?.bytes() ?: ByteArray(0)
                     if (status == 429 || status >= 500) { last = ProviderException.upstream("video_model HTTP $status"); return@use }
