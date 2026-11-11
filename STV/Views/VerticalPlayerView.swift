@@ -292,10 +292,9 @@ struct PlayerScreen: View {
         .scrollTargetBehavior(.paging)
         .scrollIndicators(.hidden)
         .scrollPosition(id: Binding(get: { co.current }, set: { co.select($0) }))
-        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, y in feedScrollY = y }
+        .feedScrollTracking(onY: { feedScrollY = $0 }, onSettled: { feedSettled = $0; releaseHeldIfSettled() })
         .sensoryFeedback(.selection, trigger: co.current)
         .onChange(of: co.readyIndex) { _, _ in releaseHeldIfSettled() }
-        .onScrollPhaseChange { _, phase in feedSettled = phase == .idle; releaseHeldIfSettled() }
         .onChange(of: co.current) { old, new in
             if old != nil, let new, co.episodes.indices.contains(new) { showOSD("第\(co.episodes[new].ep)集") }
         }
@@ -1188,3 +1187,19 @@ struct PlayerTouchCatcher: UIViewRepresentable {
     }
 }
 
+
+/// iOS 17 兼容层：滚动物理回调（`onScrollGeometryChange` / `onScrollPhaseChange`）从 iOS 18 才有，
+/// 低版本上退化为无回调，页面上表现为关闭视差与提前释放上一帧，播放不受影响。
+private extension View {
+    @ViewBuilder
+    func feedScrollTracking(onY: @escaping (CGFloat) -> Void,
+                            onSettled: @escaping (Bool) -> Void) -> some View {
+        if #available(iOS 18.0, *) {
+            self
+                .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, y in onY(y) }
+                .onScrollPhaseChange { _, phase in onSettled(phase == .idle) }
+        } else {
+            self
+        }
+    }
+}
