@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import CommonCrypto
 
 /// Pure-Swift port of gateway/internal/provider/hongguo/playersign (4edae5c, 2026-11-03).
 /// Full portable player signature set (Argus/Gorgon/Helios/Ladon/Medusa) for video_model v1.
@@ -522,5 +523,115 @@ enum HGPlayerSign {
         out += [UInt8(ent.random & 255), UInt8((ent.random >> 8) & 255), 0, 1]
         out += encrypted
         return Data(out).base64EncodedString()
+    }
+}
+
+// Playback 551 framing and protocol constants cross-checked with hongguo-open-player
+// 3f687c5 (src/server/native/argus.js, GPL-3.0-only; adapted from fqapp/hongguoTV).
+// These are SDK protocol constants, not user credentials.
+extension HGPlayerSign {
+    /// Sign the exact wire body. Legacy Gorgon/Medusa must not be added to this dialect:
+    /// the upstream rejects that combination even when Argus and Ladon are valid.
+    static func playbackHeaders(query: String, body: [UInt8], timestamp: UInt32,
+                                argusRandom: UInt32? = nil, ladonRandom: UInt32? = nil) throws -> [String: String] {
+        func param(_ name: String) -> String {
+            for part in query.split(separator: "&") {
+                let pair = part.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                if String(pair[0]).removingPercentEncoding == name {
+                    return pair.count > 1 ? (String(pair[1]).removingPercentEncoding ?? String(pair[1])) : ""
+                }
+            }
+            return ""
+        }
+        let aid = param("aid").isEmpty ? "1967" : param("aid")
+        let license = "1611921764"
+        let random = argusRandom ?? UInt32.random(in: .min ... .max)
+        // This schema uses unsigned uint32 varints, unlike the older Medusa schema.
+        func uint(_ field: UInt32, _ value: UInt32) -> [UInt8] { pKey(field, 0) + varint(UInt64(value)) }
+        func str(_ field: UInt32, _ value: String) -> [UInt8] {
+            let bytes = Array(value.utf8)
+            return pKey(field, 2) + varint(UInt64(bytes.count)) + bytes
+        }
+        var bean = uint(1, 1077940818) + uint(2, 2) + uint(3, random)
+        bean += str(4, aid) + str(5, param("device_id")) + str(6, license)
+        bean += str(7, param("version_name")) + str(8, "v04.04.05-ov-android")
+        bean += uint(9, 134744640) + pBytes(10, [UInt8](repeating: 0, count: 8)) + uint(11, 0)
+        bean += uint(12, timestamp &* 2)
+        bean += pBytes(13, Array(sm3(body.isEmpty ? [UInt8](repeating: 0, count: 16) : md5(body)).prefix(6)))
+        bean += pBytes(14, Array(sm3(query.isEmpty ? [UInt8](repeating: 0, count: 16) : Array(query.utf8)).prefix(6)))
+        bean += pBytes(15, uint(1, 1) + uint(2, 1) + uint(3, 1) + uint(7, 0xC792ECCC))
+        bean += str(16, param("iid")) + str(20, "none") + uint(21, 738)
+        bean += pBytes(23, str(1, "NX551J") + uint(2, 8196) + uint(4, 0x80E0D800)) + uint(25, 2)
+
+        let signKey = hexBytes("fc78e0a9657a0c748ce51559903ccf03510e51d3cff232d71343e88a321c5304")
+        var keys = (0..<4).map { rdLE64(signKey, $0 * 8) }
+        let z: UInt64 = 0x3DC94C3A046D678B
+        for i in 4..<72 {
+            var t = ror64(keys[i - 1], 3) ^ keys[i - 3]
+            t ^= ror64(t, 1)
+            keys.append(~keys[i - 4] ^ t ^ ((z >> UInt64((i - 4) % 62)) & 1) ^ 3)
+        }
+        let padded = playbackPad(bean)
+        var encrypted = [UInt8]()
+        for at in stride(from: 0, to: padded.count, by: 16) {
+            var left = rdLE64(padded, at), right = rdLE64(padded, at + 8)
+            for key in keys {
+                let oldRight = right
+                right = left ^ (ror64(right, 63) & ror64(right, 56)) ^ ror64(right, 62) ^ key
+                left = oldRight
+            }
+            encrypted += wrLE64(left) + wrLE64(right)
+        }
+        let magic = hexBytes("f2f7fcfff2f7fcff")
+        var frame = magic + encrypted + hexBytes("eafb2cfe8568519154")
+        for i in 8..<frame.count { frame[i] ^= magic[i % 8] }
+        frame.reverse()
+        let packet = playbackPad(frame + [0x61, 0x6f])
+        let argus = try playbackAES(packet, key: hexBytes("d31e3718288a1027baab59f146a09a9c"), iv: hexBytes("ea180a0336ed352fcd24e4d50018ae54"))
+        var headers = ["x-ss-req-ticket": String(UInt64(timestamp) * 1000), "x-khronos": String(timestamp),
+                       "x-argus": Data([0xf2, 0x81] + argus).base64EncodedString(),
+                       "x-ladon": playbackLadon(timestamp: timestamp, aid: aid, license: license,
+                                                random: ladonRandom ?? UInt32.random(in: .min ... .max))]
+        if !body.isEmpty { headers["x-ss-stub"] = hexStr(md5(body)).uppercased() }
+        return headers
+    }
+
+    private static func playbackPad(_ bytes: [UInt8]) -> [UInt8] {
+        let count = 16 - bytes.count % 16
+        return bytes + [UInt8](repeating: UInt8(count), count: count)
+    }
+
+    private static func playbackLadon(timestamp: UInt32, aid: String, license: String, random: UInt32) -> String {
+        let ascii = Array(hexStr(md5(le32(random) + Array(aid.utf8))).utf8)
+        var table = [rdLE64(ascii, 0)]
+        var a = table[0], b = rdLE64(ascii, 8)
+        var queue = [rdLE64(ascii, 16), rdLE64(ascii, 24)]
+        for i in UInt64(0)..<34 {
+            let x = (ror64(b, 8) &+ a) ^ i
+            queue.append(x)
+            a = x ^ ror64(a, 61)
+            table.append(a)
+            b = queue.removeFirst()
+        }
+        let text = playbackPad(Array("\(timestamp)-\(license)-\(aid)".utf8))
+        var result = le32(random)
+        for at in stride(from: 0, to: text.count, by: 16) {
+            var left = rdLE64(text, at), right = rdLE64(text, at + 8)
+            for key in table.prefix(34) {
+                right = key ^ (left &+ ror64(right, 8))
+                left = right ^ ror64(left, 61)
+            }
+            result += wrLE64(left) + wrLE64(right)
+        }
+        return Data(result).base64EncodedString()
+    }
+
+    private static func playbackAES(_ bytes: [UInt8], key: [UInt8], iv: [UInt8]) throws -> [UInt8] {
+        var output = [UInt8](repeating: 0, count: bytes.count + 16)
+        var written = 0
+        let status = CCCrypt(CCOperation(kCCEncrypt), CCAlgorithm(kCCAlgorithmAES), CCOptions(0),
+                             key, key.count, iv, bytes, bytes.count, &output, output.count, &written)
+        guard status == kCCSuccess else { throw ProviderError.invalid("播放器签名 AES 失败：\(status)") }
+        return Array(output.prefix(written))
     }
 }

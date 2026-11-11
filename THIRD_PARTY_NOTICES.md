@@ -66,9 +66,16 @@ Pornhub (mediaDefinitions) were cross-checked against its extractors. The Swift 
 
 ## Reverse-engineered protocol data (Hongguo / 红果)
 - `STV/Providers/Hongguo/*` and `STV/Resources/medusa_tables.bin` implement the Hongguo app's request signing
-  (X-Gorgon / X-Argus / X-Medusa) and device registration from interoperability analysis. No third-party source code is
-  included. No device identifiers, accounts or keys are bundled: every install registers / mints its own anonymous device.
+  (X-Gorgon / X-Argus / X-Medusa) and device registration from interoperability analysis. Apart from the playback
+  signer noted below, no third-party source code is included. No device identifiers, accounts or keys are bundled:
+  every install registers / mints its own anonymous device.
+
+## Hongguo playback authentication — GPL-3.0-only
+The Argus 551 framing and Ladon implementation in `HGPlayerSign.swift` (`playbackHeaders`) is adapted to Swift from
+`zfdang/hongguo-open-player`, commit 3f687c5, `src/server/native/argus.js` (SPDX: GPL-3.0-only),
+which credits fqapp / N3urda/hongguoTV. The test vectors in `STVTests/PrefetchTests.swift` match that JS signer.
+Source reference: https://github.com/zfdang/hongguo-open-player/commit/3f687c5
 
 ## License compatibility
-All components above (Apache-2.0, MIT, BSD-2-Clause, WTFPL, BSL-1.0, Unlicense, LGPL-2.1/LGPL-3.0 with exception) are
+All components above (Apache-2.0, MIT, BSD-2-Clause, WTFPL, BSL-1.0, Unlicense, LGPL-2.1/LGPL-3.0 with exception, GPL-3.0-only) are
 compatible with distributing the whole work under GPL-3.0. This project itself is licensed under **GPL-3.0** (see `LICENSE`).

@@ -509,8 +509,7 @@ actor HongguoClient {
 
     func resolveFresh(vid: String) async throws -> HGResolvedVideo {
         var sawSoftReject = false
-        // Gateway 4edae5c (2026-11-03): pure portable player signatures on single video_model first;
-        // the batch endpoint still only has old Gorgon and soft-rejects, so it is now only a fallback.
+        // Full Argus 551 / Ladon on single video_model first; legacy batch remains a fallback.
         for level in [3, 4] {
             try Task.checkCancellation()
             do {
@@ -603,7 +602,7 @@ actor HongguoClient {
     }
 
     private func resolvePure(_ vid: String, level: Int) async throws -> HGResolvedVideo {
-        // No content_type: with it the compatible entry returns 200 + 0 bytes even when signed correctly.
+        // Keep the previously compatible single-video body; sign its exact bytes.
         let bodyObj: [String: Any] = ["video_id": vid,
                                       "biz_param": ["video_id_type": 0, "need_all_video_definition": true, "video_platform": 3,
                                                     "device_level": level >= 4 ? 4 : 3] as [String: Any]]
@@ -614,11 +613,14 @@ actor HongguoClient {
             if attempt > 0 { try await Task.sleep(for: .milliseconds(500)) }
             let now = Date()
             let nowMs = Int64(now.timeIntervalSince1970 * 1000)
-            let (q, headers) = HGPlayerSign.signPOST(path: Self.purePlayerPath, pairs: Self.purePlayerPairs(), nowMillis: nowMs,
-                                                     deviceID: Self.purePlayerDeviceID, versionName: Self.purePlayerVersionName, body: Array(body))
+            let ts = UInt32(nowMs / 1000)
+            let q = HGPlayerSign.encodeQuery(Self.purePlayerPairs() + [("ts", String(ts)), ("_rticket", String(nowMs))])
+            let headers = try HGPlayerSign.playbackHeaders(query: q, body: Array(body), timestamp: ts)
             var req = URLRequest(url: URL(string: "https://" + Self.purePlayerHost + Self.purePlayerPath + "?" + q)!)
             req.httpMethod = "POST"
             req.httpBody = body
+            req.setValue("application/json; charset=UTF-8", forHTTPHeaderField: "Content-Type")
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
             for (k, v) in headers where !v.isEmpty { req.setValue(v, forHTTPHeaderField: k) }
             req.setValue(Self.purePlayerUA, forHTTPHeaderField: "User-Agent")
             req.setValue("8662", forHTTPHeaderField: "x-ss-dp")
