@@ -110,7 +110,7 @@ struct SourcesView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.footnote.weight(.semibold)).foregroundStyle(STVTheme.secondary).padding(.horizontal, 20)
             VStack(spacing: 0) { content() }
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal, 16)
         }
     }
@@ -210,7 +210,7 @@ struct PlayerCoreLicenses: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+            .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
         }
     }
 }
@@ -242,7 +242,7 @@ struct LicensesView: View {
                     }
                 }
                 .padding(14)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 8) {
                     Text("yt-dlp").font(.headline).foregroundStyle(STVTheme.text)
                     Text("The Unlicense（公共领域）").font(.subheadline).foregroundStyle(STVTheme.secondary)
@@ -252,7 +252,7 @@ struct LicensesView: View {
                         .font(.caption).foregroundStyle(STVTheme.secondary)
                 }
                 .padding(14)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TDLibKit / TDLib").font(.headline).foregroundStyle(STVTheme.text)
                     Text("TDLibKit：MIT · TDLib：Boost Software License 1.0").font(.subheadline).foregroundStyle(STVTheme.secondary)
@@ -261,7 +261,7 @@ struct LicensesView: View {
                     Text("用于频道 TDLib 登录（私有频道、频道内搜索、机器人 /start）。只使用你自己填写的 api_id / api_hash。").font(.caption).foregroundStyle(STVTheme.secondary)
                 }
                 .padding(14)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 8) {
                     Text("QuickJS-ng").font(.headline).foregroundStyle(STVTheme.text)
                     Text("MIT License · Copyright © 2017-2024 Fabrice Bellard, Charlie Gordon; © 2023-2025 Ben Noordhuis, Saúl Ibarra Corretgé").font(.subheadline).foregroundStyle(STVTheme.secondary)
@@ -275,7 +275,7 @@ struct LicensesView: View {
                     }
                 }
                 .padding(14)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 PlayerCoreLicenses()
                 VStack(alignment: .leading, spacing: 8) {
                     Text("JMComic-Crawler-Python").font(.headline).foregroundStyle(STVTheme.text)
@@ -284,13 +284,13 @@ struct LicensesView: View {
                     Text("18comic 插件的图片分段还原（get_num / decode）参考该项目公开的算法，代码为独立的 Swift/JS 实现。").font(.caption).foregroundStyle(STVTheme.secondary)
                 }
                 .padding(14)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 8) {
                     Text("MangaDex API · 包子漫画 · Telegram 网页预览").font(.headline).foregroundStyle(STVTheme.text)
                     Text("漫画与频道解析均为本应用独立实现；MangaDex 只请求全年龄/轻度分级内容。").font(.caption).foregroundStyle(STVTheme.secondary)
                 }
                 .padding(14)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
             }.padding(16)
         }
         .defaultScrollAnchor(DebugScroll.anchor)

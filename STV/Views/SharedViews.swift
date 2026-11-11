@@ -153,8 +153,8 @@ extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        // Let edge-pop coexist with ScrollView pans / SwiftUI gestures.
-        gestureRecognizer == interactivePopGestureRecognizer
+        // Exclusive: an edge swipe that pops must not also scroll the page underneath (detail / lists).
+        false
     }
 
     public func gestureRecognizer(
@@ -242,7 +242,7 @@ enum Catalog {
         if let d = details[s.id] { return d }
         let d: HGSeriesDetail
         switch s.source {
-        case .hongguo: d = try await HongguoClient.shared.detail(seriesId: s.seriesId)
+        case .hongguo: d = try await HongguoClient.shared.detail(seriesId: s.seriesId, web: false)
         case .huangguo: d = try await HuangguoClient.shared.detail(s)
         default:
             guard let p = Sites.provider(s.source) else { throw ProviderError.unsupported(s.source.label) }
@@ -250,6 +250,15 @@ enum Catalog {
         }
         details[s.id] = d
         return d
+    }
+
+    /// 红果 second pass: cast / tags / rating from the official site, merged into the cached detail.
+    @MainActor static func enriched(_ s: HGSeries, _ d: HGSeriesDetail) async -> HGSeriesDetail? {
+        guard s.source == .hongguo, d.cast.isEmpty, d.tags.isEmpty,
+              let w = try? await HongguoClient.shared.webDetail(seriesId: s.seriesId) else { return nil }
+        let out = HongguoClient.enrich(details[s.id] ?? d, with: w)
+        details[s.id] = out
+        return out
     }
     static func resolve(_ s: HGSeries, _ ep: HGEpisode) async throws -> HGResolvedVideo {
         switch s.source {

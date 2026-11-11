@@ -52,7 +52,7 @@ struct TGPostCard: View {
             }
             .foregroundStyle(STVTheme.secondary)
             .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("tg.folded.\(post.id)")
@@ -134,7 +134,7 @@ struct TGPostCard: View {
                 if !p.image.isEmpty { CoverView(url: p.image, corner: 6).frame(width: 54, height: 54) }
             }
             .padding(8)
-            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+            .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain)
     }
 
@@ -145,7 +145,7 @@ struct TGPostCard: View {
                     if let bot = TGBotLink(url: b.url) { actions.bot(bot) } else if let u = URL(string: b.url) { openURL(u) }
                 } label: {
                     Text(b.text).font(.subheadline).foregroundStyle(STVTheme.text).frame(maxWidth: .infinity).frame(height: 34)
-                        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                        .background(STVTheme.text.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                 }.buttonStyle(.plain)
             }
         }

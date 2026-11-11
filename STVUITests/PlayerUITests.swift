@@ -59,6 +59,26 @@ final class PlayerUITests: XCTestCase {
         XCTAssertTrue(waitOrientation(landscape: false), "rotating back did not exit landscape")
     }
 
+    /// Side taps: double tap = 10 s, a third tap in the streak keeps going (20 s total), bubble on that side.
+    /// The fixture is 60 s long, so seek toward whichever end has room; tap below the centre controls.
+    func testDoubleTapSeekAccumulates() {
+        launch()
+        let bar = el("player.progress")
+        XCTAssertTrue(bar.waitForExistence(timeout: 20))
+        showChrome("player.progress")
+        let before = seconds(bar.value as? String ?? "")
+        let forward = before < 30
+        let side = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.88 : 0.12, dy: 0.64))
+        side.doubleTap(); side.tap()
+        XCTAssertTrue(el("player.seekRun").waitForExistence(timeout: 1), "seek bubble did not show")
+        shot("pl_06_double_tap_seek")
+        showChrome("player.progress")
+        let after = seconds(el("player.progress").value as? String ?? "")
+        // Two seeks in one streak: the playhead moves ≥ 18 s in that direction.
+        let moved = forward ? after - before : before - after
+        XCTAssertGreaterThanOrEqual(moved, 18, "double-tap seek did not accumulate: \(before)s → \(after)s")
+    }
+
     func testProgressBarDragSeeks() {
         launch()
         let bar = el("player.progress")
@@ -76,6 +96,25 @@ final class PlayerUITests: XCTestCase {
         el("player.progress").coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
         showChrome("player.progress")
         XCTAssertLessThan(seconds(el("player.progress").value as? String ?? ""), 25, "tap-to-seek failed")
+    }
+
+    /// Pinch out on the video → 铺满全屏, pinch in → 完整自适应.
+    func testPinchTogglesFill() {
+        launch(["STV_FILL": "0"])
+        XCTAssertTrue(el("player.progress").waitForExistence(timeout: 20))
+        let video = el("player.video")
+        XCTAssertEqual(video.value as? String, "fit")
+        app.windows.firstMatch.pinch(withScale: 2.2, velocity: 3)
+        XCTAssertTrue(waitValue(video, "fill"), "pinch out did not fill: \(video.value ?? "-")")
+        shot("pl_07_pinch_fill")
+        app.windows.firstMatch.pinch(withScale: 0.45, velocity: -3)
+        XCTAssertTrue(waitValue(video, "fit"), "pinch in did not fit: \(video.value ?? "-")")
+    }
+
+    private func waitValue(_ e: XCUIElement, _ v: String, timeout: TimeInterval = 3) -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        while Date() < end { if e.value as? String == v { return true }; Thread.sleep(forTimeInterval: 0.2) }
+        return e.value as? String == v
     }
 
     func testScrubbingLookScreenshot() {

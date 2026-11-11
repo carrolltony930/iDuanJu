@@ -155,7 +155,7 @@ actor HongguoClient {
     }
 
     /// gzip JSON POST with x-ss-stub (fetch.go postJSON). For detail/list — **not** player batch.
-    private func postJSON(_ base: String, _ query: String, _ body: Data) async throws -> [String: Any] {
+    private func postJSON(_ base: String, _ query: String, _ body: Data, retries: Int = 2) async throws -> [String: Any] {
         let gz = Gzip.compress(body)
         let now = Self.nowMs()
         var req = URLRequest(url: URL(string: base + query)!)
@@ -167,7 +167,7 @@ actor HongguoClient {
         req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         req.setValue("gzip", forHTTPHeaderField: "Content-Encoding")
         req.setValue(Bytes.hex(Bytes.md5(Array(gz))).uppercased(), forHTTPHeaderField: "x-ss-stub")
-        return try await send(req)
+        return try await send(req, retries: retries)
     }
 
     /// Soft reject from multi_video_model/player/v1: HTTP 200 + 0 bytes (gateway errPlayerEmptyBody).
@@ -392,7 +392,8 @@ actor HongguoClient {
 
     // MARK: detail (series.go)
 
-    func detail(seriesId sid: String) async throws -> HGSeriesDetail {
+    /// `web: false` skips the official-site scrape (cast / tags / rating) — the slowest leg; fill it in later with `enrich`.
+    func detail(seriesId sid: String, web: Bool = true) async throws -> HGSeriesDetail {
         let body: [String: Any] = [
             "biz_param": [
                 "detail_page_version": 0, "disable_digg_stat": false, "disable_video_relate_book": false,
@@ -403,10 +404,11 @@ actor HongguoClient {
             "dr_scene": "preload", "series_id": sid
         ]
         // Fire detail, directory and franchise landing concurrently (was a serial waterfall).
-        async let detailJ = try? postJSON(Self.urlDetail, Self.detailQuery(Self.nowMs()), J.encodeSorted(body))
-        async let dirJ = try? bookDirectory(sid)
-        async let landedJ = try? seriesLanding(stickIds: sid, maxPages: 2)
-        async let webJ = try? webDetail(seriesId: sid)
+        let t0 = Date()
+        async let detailJ = Self.timed("detail.preload", t0) { try? await self.postJSON(Self.urlDetail, Self.detailQuery(Self.nowMs()), J.encodeSorted(body), retries: 0) }
+        async let dirJ = Self.timed("detail.directory", t0) { try? await self.bookDirectory(sid) }
+        async let landedJ = Self.timed("detail.landing", t0) { try? await self.seriesLanding(stickIds: sid, maxPages: 2) }
+        async let webJ = web ? Self.timed("detail.web", t0) { try? await self.webDetail(seriesId: sid) } : nil
         var vd: [String: Any] = [:]
         if let j = await detailJ, J.str(j["code"]) == "0" {
             vd = J.dict(J.dict(J.dict(j["data"])[sid])["video_data"])
@@ -452,6 +454,15 @@ actor HongguoClient {
                               author: J.firstNonEmpty(J.str(info["author"]), J.str(info["source"])), actors: actors,
                               onlineTime: Int(J.unix(info["create_time"])), totalEps: J.int(vd["episode_cnt"]), episodes: eps,
                               relatedSeries: related), with: await webJ)
+    }
+
+    /// DEBUG: logs how long a 红果 request took since `t0` (one line per call, for latency work).
+    private static func timed<T>(_ label: String, _ t0: Date, _ work: () async -> T?) async -> T? {
+        let v = await work()
+        #if DEBUG
+        NSLog("%@", String(format: "[HG] t %@ %.2fs%@", label, Date().timeIntervalSince(t0), v == nil ? " (nil)" : ""))
+        #endif
+        return v
     }
 
     private func bookDirectory(_ sid: String) async throws -> [String: Any] {

@@ -20,6 +20,11 @@ final class LocalHLSProxy: @unchecked Sendable {
         var length: Int?
         /// TDLib video streamed while it downloads (`/tg/<file id>`).
         var td: TDStreamSession?
+        /// 红果 CENC MP4: content key, and the per-range decryptor once the header is read (`prepareCENC`).
+        var cencKey: String?
+        var cenc: CENCDecryptor.RangePlan?
+        /// MP4 chunk size (CENC uses small chunks so the header and first frames arrive fast on slow links).
+        var chunk = BufferSettings.mp4Chunk
     }
     static let shared = LocalHLSProxy()
 
@@ -44,6 +49,42 @@ final class LocalHLSProxy: @unchecked Sendable {
     /// Proxy URL for a progressive MP4 (Range requests served chunk-wise from the prefetch cache).
     func mp4URL(_ upstream: String, headers: [String: String], budget: Int) -> String? {
         register(upstream, headers: headers, strip: false, budget: budget, kind: "v.mp4")
+    }
+
+    /// Proxy URL for an encrypted (CENC AES-CTR) progressive MP4, decrypted range by range as it is served,
+    /// so playback starts without downloading the whole file. Call `prepareCENC` before handing it out.
+    func cencMP4URL(_ upstream: String, headers: [String: String], key: String, budget: Int) -> String? {
+        guard let u = register(upstream, headers: headers, strip: false, budget: budget, kind: "v.mp4"),
+              let token = Self.token(of: u) else { return nil }
+        lock.lock(); routes[token]?.cencKey = key; routes[token]?.chunk = 262_144; lock.unlock()
+        return u
+    }
+
+    /// Reads the CENC header (`moov`) of a `cencMP4URL` and builds its decryptor. Throws when the file
+    /// can't be streamed (moov after mdat, fragmented) — the caller then falls back to a full download.
+    func prepareCENC(_ proxied: String) async throws {
+        guard let token = Self.token(of: proxied), let rt = route(token), let key = rt.cencKey,
+              let q = URL(string: proxied)?.query, q.hasPrefix("u="), let up = Self.unb64(String(q.dropFirst(2))),
+              let url = URL(string: up) else { throw URLError(.badURL) }
+        if rt.cenc != nil { return }
+        let total = try await mp4Length(token, url, rt)
+        let chunk = rt.chunk
+        var header: [UInt8] = []
+        for i in 0..<((total + chunk - 1) / chunk) {
+            header += try await mp4Chunk(token, url, rt, i, total)
+            switch CENCDecryptor.moovLocation(header) {
+            case .more: continue
+            case .tail: throw CENCDecryptor.Failure.malformed("moov 在 mdat 之后")
+            case .end(let end):
+                guard end <= header.count else { continue }
+                guard let plan = try CENCDecryptor.rangePlan(header: Array(header.prefix(end)), keyHex: key) else {
+                    throw CENCDecryptor.Failure.malformed("无法流式解密")
+                }
+                lock.lock(); routes[token]?.cenc = plan; lock.unlock()
+                return
+            }
+        }
+        throw CENCDecryptor.Failure.malformed("缺少 moov")
     }
 
     /// Proxy URL for a TDLib video: `http://127.0.0.1:<port>/tg/<file id>`, served to AVPlayer as a plain
@@ -129,8 +170,8 @@ final class LocalHLSProxy: @unchecked Sendable {
 
     /// MP4 chunk count (0 until the length is known).
     func mp4Chunks(_ token: String) -> Int {
-        guard let n = route(token)?.length else { return 0 }
-        return (n + BufferSettings.mp4Chunk - 1) / BufferSettings.mp4Chunk
+        guard let r = route(token), let n = r.length else { return 0 }
+        return (n + r.chunk - 1) / r.chunk
     }
 
     /// Leaving the player: stop downloads and drop this stream's cache.
@@ -285,7 +326,7 @@ final class LocalHLSProxy: @unchecked Sendable {
         guard let total, total > 0 else { throw URLError(.cannotParseResponse) }
         lock.lock(); routes[token]?.length = total; lock.unlock()
         if let pf = rt.prefetcher {
-            let chunk = BufferSettings.mp4Chunk
+            let chunk = rt.chunk
             let n = (total + chunk - 1) / chunk
             pf.setUnits((0..<n).map { i in
                 let lo = i * chunk, hi = min(total, lo + chunk) - 1
@@ -304,7 +345,7 @@ final class LocalHLSProxy: @unchecked Sendable {
             let out = Data("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */\(total)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
             return c.send(content: out, completion: .contentProcessed { _ in c.cancel() })
         }
-        let chunk = BufferSettings.mp4Chunk
+        let chunk = rt.chunk
         let indices = Array(Self.chunks(covering: want, chunk: chunk))
         // Fetch the first chunk BEFORE committing a 206: an upstream failure becomes a clean 502 instead of
         // a 206 header followed by an error body / truncated body (AVPlayer: "Cannot Open" -11829/-11850).
@@ -320,13 +361,15 @@ final class LocalHLSProxy: @unchecked Sendable {
         guard await send(c, Data(out.utf8)), !head else { return c.cancel() }
         for i in indices {
             let lo = i * chunk, hi = min(total, lo + chunk) - 1
-            let data: Data
+            var data: Data
             if i == indices[0], let first { data = first }
             else {
                 // Headers are out: on failure just close — AVPlayer re-requests the missing range.
                 guard let d = try? await mp4Chunk(token, url, rt, i, total) else { break }
                 data = d
             }
+            // CENC: the pre-buffer keeps ciphertext; decrypt each chunk on its way out.
+            if let plan = route(token)?.cenc { guard (try? plan.apply(&data, at: lo)) != nil else { break } }
             let a = max(want.lowerBound, lo) - lo, b = min(want.upperBound, hi) - lo
             guard a <= b, b < data.count else { break }
             if !(await send(c, data.subdata(in: a..<(b + 1)))) { break }   // player hung up (seek)
@@ -337,7 +380,7 @@ final class LocalHLSProxy: @unchecked Sendable {
     /// One MP4 chunk: pre-buffer first, then up to two direct upstream retries (a single flaky CDN request
     /// or a prefetch unit marked failed must not kill playback).
     private func mp4Chunk(_ token: String, _ url: URL, _ rt: Route, _ i: Int, _ total: Int) async throws -> Data {
-        let chunk = BufferSettings.mp4Chunk
+        let chunk = rt.chunk
         let lo = i * chunk, hi = min(total, lo + chunk) - 1
         #if DEBUG
         if Self.fault == "chunk", i >= 1 { throw URLError(.networkConnectionLost) }

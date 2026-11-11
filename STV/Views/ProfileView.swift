@@ -25,14 +25,14 @@ struct ProfileView: View {
                     link("剧星榜", "star.circle", .actorRank)
                     link("我的收藏", "heart", .favorites, trailing: "\(library.favorites.count)")
                 }
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal, 16)
                 VStack(spacing: 0) {
                     link("Telegram 频道", "paperplane", .channels, trailing: "\(TGStore.shared.visibleChannels.count) 个")
                     link("漫画", "book", .mangaHome, trailing: MangaStore.shared.favorites.isEmpty ? nil : "收藏 \(MangaStore.shared.favorites.count)")
                     link("下载管理", "arrow.down.circle", .downloads, trailing: TGDownloads.shared.visible.isEmpty ? nil : "\(TGDownloads.shared.visible.count)")
                 }
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal, 16)
                 VStack(spacing: 0) {
                     link("片源管理", "square.stack.3d.down.right", .sources,
@@ -40,7 +40,7 @@ struct ProfileView: View {
                     link("插件", "puzzlepiece.extension", .plugins, trailing: pluginTrailing)
                     link("开源许可", "doc.text", .licenses)
                 }
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal, 16)
                 VStack(spacing: 0) {
                     row("重置红果设备注册", "arrow.counterclockwise") { await HongguoClient.shared.resetDevice(); message = "已重置红果设备" }
@@ -48,7 +48,7 @@ struct ProfileView: View {
                     row("清空封面缓存", "photo.stack") { await CoverStore.shared.clear(); message = "封面缓存已清空" }
                     row("清空播放缓存", "trash") { try? FileManager.default.removeItem(at: EpisodePlaybackLoader.cacheDir); await HongguoClient.shared.clearResolveCache(); message = "播放缓存已清空" }
                 }
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal, 16)
                 Text(message ?? "所有数据由本机直连上游，观看记录和收藏只保存在本机。\n\(Self.versionText)")
                     .font(.caption).foregroundStyle(STVTheme.secondary).padding(.horizontal, 16)

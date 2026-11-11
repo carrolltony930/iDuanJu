@@ -49,7 +49,7 @@ actor HuangguoClient {
         .init(sub: .ai, slug: "ai-mogai", title: "AI魔改", isRank: false),
     ]
     static let videoChannels: [HuangguoChannel] = (0...4).map {
-        .init(sub: .video, slug: String($0), title: ["全部", "分类一", "分类二", "分类三", "分类四"][$0], isRank: false)
+        .init(sub: .video, slug: String($0), title: ["全部", "MV/音乐剧", "短片", "连续剧", "片段"][$0], isRank: false)
     }
 
     private let session: URLSession = {

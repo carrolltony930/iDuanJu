@@ -29,7 +29,7 @@ struct PluginsView: View {
                     ForEach(store.visiblePlugins) { p in
                         NavigationLink { PluginDetailView(id: p.id) } label: { pluginRow(p) }.buttonStyle(.plain)
                             .accessibilityIdentifier("plugins.row.\(p.id)")
-                        if p.id != store.visiblePlugins.last?.id { Divider().overlay(Color.white.opacity(0.06)).padding(.leading, 48) }
+                        if p.id != store.visiblePlugins.last?.id { Divider().overlay(STVTheme.text.opacity(0.06)).padding(.leading, 48) }
                     }
                 }
                 if hiddenAdult > 0 {
@@ -46,7 +46,7 @@ struct PluginsView: View {
                         HStack { Image(systemName: "arrow.up.circle.fill").foregroundStyle(STVTheme.accent)
                             Text("\(u.manifest.name) 可更新到 \(u.manifest.version)").foregroundStyle(STVTheme.text); Spacer()
                             Text("查看权限变化").font(.caption).foregroundStyle(STVTheme.accent) }.padding(14)
-                    }.buttonStyle(.plain).background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14)).padding(.horizontal, 16)
+                    }.buttonStyle(.plain).background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14)).padding(.horizontal, 16)
                 }
                 group("订阅") {
                     ForEach(store.subscriptions) { s in subscriptionBlock(s) }
@@ -254,7 +254,7 @@ struct PluginsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.footnote.weight(.semibold)).foregroundStyle(STVTheme.secondary).padding(.horizontal, 20)
             VStack(spacing: 0) { content() }
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal, 16)
         }
     }

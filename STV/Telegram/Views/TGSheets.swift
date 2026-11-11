@@ -50,7 +50,6 @@ struct TGBlockSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .preferredColorScheme(.dark)
     }
 }
 
@@ -95,7 +94,6 @@ struct TGBotSheet: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
         }
         .presentationDetents([.medium, .large])
-        .preferredColorScheme(.dark)
     }
 }
 
@@ -292,7 +290,7 @@ struct TGSearchView: View {
                         openImages: { p, i in viewer = .init(urls: p.media.filter { $0.kind == .photo }.map(\.thumb), index: 0) },
                         playVideo: { p, i in if let s = TGVideoProvider.series(p, media: i, channel: store.channel(p.channel)) { Router.push(.play(s, 0)) } },
                         download: { p, i in TGDownloads.shared.enqueue(post: p, media: i, channel: store.channel(p.channel)) }))
-                    Divider().overlay(Color.white.opacity(0.06))
+                    Divider().overlay(STVTheme.text.opacity(0.06))
                 }
                 if searching { ProgressView().frame(maxWidth: .infinity).padding() }
                 else if online && !cursors.isEmpty && !results.isEmpty {
@@ -528,7 +526,7 @@ struct TDChatView: View {
                             Router.push(.play(HGSeries(source: .telegram, seriesId: "td/\(p.channel)/\(p.msgId)/\(i)", title: title, cover: p.media[i].thumb,
                                                        duration: p.media[i].duration, orientation: "landscape", page: v), 0))
                         }))
-                    Divider().overlay(Color.white.opacity(0.06))
+                    Divider().overlay(STVTheme.text.opacity(0.06))
                 }
                 if loading { ProgressView().frame(maxWidth: .infinity).padding() }
                 else if !posts.isEmpty && q.isEmpty {

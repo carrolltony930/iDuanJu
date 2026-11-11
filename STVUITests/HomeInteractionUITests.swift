@@ -53,10 +53,13 @@ final class HomeInteractionUITests: XCTestCase {
     func testSourceBarTapAndPagerSwipe() {
         XCTAssertTrue(el("home.hero.page.0").waitForExistence(timeout: 20), "hero not loaded")
         XCTAssertTrue(el("home.channel.红果").isSelectedChannel())
-        // Swipe on the 红果 page below the hero (继续观看 / sections) → pages to 黄果.
-        let hg = el("home.page.红果")
-        hg.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.75))
-            .press(forDuration: 0.05, thenDragTo: hg.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.75)))
+        // Swipe on the 红果 page below the hero → pages to 黄果. Start on a section header: the 继续观看 row
+        // itself scrolls horizontally once there is watch history, and must keep that gesture.
+        let header = app.staticTexts["继续观看"].firstMatch
+        XCTAssertTrue(header.waitForExistence(timeout: 5))
+        let w = app.windows.firstMatch, y = header.frame.midY / max(1, w.frame.height)
+        w.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: y))
+            .press(forDuration: 0.05, thenDragTo: w.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: y)))
         XCTAssertTrue(el("home.channel.黄果").isSelectedChannel(), "swipe on 红果 page did not page to 黄果")
         fingerTap(el("home.channel.红果"))
         XCTAssertTrue(el("home.channel.红果").isSelectedChannel())

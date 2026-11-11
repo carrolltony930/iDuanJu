@@ -85,6 +85,9 @@ struct HomeView: View {
     @State private var source: HomeSource
     @State private var subs: [HomeSource: HomeTab]
     @State private var heroCovers: [HomeSource: String] = [:]
+    /// Header text sits on the blurred hero poster (dark) when there is one, else on the page colour.
+    private var onPoster: Bool { heroCovers[source] != nil }
+    private var headerInk: Color { onPoster ? .white : STVTheme.text }
     @State private var showChannels = false
 
     init() {
@@ -149,12 +152,12 @@ struct HomeView: View {
                     .padding(.horizontal, 14).frame(height: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityLabel("筛选与全部频道").accessibilityIdentifier("home.filter")
             }
-            .foregroundStyle(.white)
-            .background(.white.opacity(0.18), in: Capsule())
+            .foregroundStyle(headerInk)
+            .background(headerInk.opacity(onPoster ? 0.18 : 0.07), in: Capsule())
             .background(.ultraThinMaterial.opacity(0.6), in: Capsule())
-            .overlay { Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1) }
+            .overlay { Capsule().strokeBorder(headerInk.opacity(0.14), lineWidth: 1) }
             .padding(.horizontal, 16)
-            HomeChannelBar(items: HomeSource.all, selection: $source, label: \.label) { showChannels = true }
+            HomeChannelBar(items: HomeSource.all, selection: $source, label: \.label, ink: headerInk) { showChannels = true }
                 .padding(.leading, 16)
         }
         .padding(.top, 6)
@@ -164,7 +167,9 @@ struct HomeView: View {
     @ViewBuilder private var atmosphere: some View {
         let url = heroCovers[source]
         ZStack {
-            Color(red: 0.08, green: 0.10, blue: 0.15)
+            // Dark ground under the blurred poster keeps the white header legible; without a poster (漫画 / 频道)
+            // it would be a dark band in light mode, so use a soft tint of the page colour instead.
+            if url != nil { Color(red: 0.08, green: 0.10, blue: 0.15) } else { STVTheme.elevated }
             if let url {
                 CoverView(url: url, corner: 0).blur(radius: 48).opacity(0.75).id(url)
                     .transition(.opacity)
@@ -208,7 +213,6 @@ struct HomeView: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .preferredColorScheme(.dark)
     }
 }
 
@@ -272,9 +276,9 @@ private struct HomeFeedPage: View {
                     let on = t == tab
                     Button { withAnimation(.snappy) { tab = t } } label: {
                         Text(t.subLabel).font(.system(size: 13, weight: on ? .semibold : .regular))
-                            .foregroundStyle(on ? Color.black.opacity(0.88) : Color.white.opacity(0.78))
+                            .foregroundStyle(on ? STVTheme.bg : STVTheme.text.opacity(0.8))
                             .padding(.horizontal, 12).frame(height: 30)
-                            .background(on ? Color.white : Color.white.opacity(0.10), in: Capsule())
+                            .background(on ? STVTheme.text : STVTheme.text.opacity(0.1), in: Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("home.sub.\(t.subLabel)")
@@ -293,9 +297,9 @@ private struct HomeFeedPage: View {
                 ForEach(Array(boards.enumerated()), id: \.element.id) { i, b in
                     NavigationLink(value: Route.board(b)) {
                         Text(b.title).font(.system(size: 13, weight: i == 0 ? .semibold : .regular))
-                            .foregroundStyle(i == 0 ? Color.black.opacity(0.88) : Color.white.opacity(0.78))
+                            .foregroundStyle(i == 0 ? STVTheme.bg : STVTheme.text.opacity(0.8))
                             .padding(.horizontal, 12).frame(height: 30)
-                            .background(i == 0 ? Color.white : Color.white.opacity(0.10), in: Capsule())
+                            .background(i == 0 ? STVTheme.text : STVTheme.text.opacity(0.1), in: Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("home.sub.\(b.title)")
@@ -392,6 +396,7 @@ struct HomeChannelBar<T: Hashable>: View {
     let items: [T]
     @Binding var selection: T
     let label: (T) -> String
+    var ink: Color = .white
     var onExpand: () -> Void
     @Namespace private var ns
     var body: some View {
@@ -404,7 +409,7 @@ struct HomeChannelBar<T: Hashable>: View {
                             Button { withAnimation(.snappy) { selection = it } } label: {
                                 Text(label(it))
                                     .font(.system(size: on ? 20 : 17, weight: on ? .bold : .regular))
-                                    .foregroundStyle(on ? Color.white : Color.white.opacity(0.62))
+                                    .foregroundStyle(on ? ink : ink.opacity(0.62))
                                     .frame(minHeight: 44)
                                     .overlay(alignment: .bottom) {
                                         if on { Capsule().fill(STVTheme.accent).frame(width: 18, height: 3).offset(y: -2)
@@ -424,7 +429,7 @@ struct HomeChannelBar<T: Hashable>: View {
             }
             Button(action: onExpand) {
                 Image(systemName: "chevron.down").font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85)).frame(width: 44, height: 44)
+                    .foregroundStyle(ink.opacity(0.85)).frame(width: 44, height: 44)
             }.buttonStyle(.plain).accessibilityLabel("展开全部频道").accessibilityIdentifier("home.expand")
         }
         .padding(.top, 6).padding(.bottom, 8)
@@ -435,6 +440,7 @@ struct HomeChannelBar<T: Hashable>: View {
 /// 右侧榜单名、片名、标签/集数/热度、简介或主演，以及「查看详情」。横滑切换，右上指示点。
 /// 长视频站点（横版封面）同一布局里海报区按 16:9 显示在上方。
 private struct PosterHero: View {
+    @Environment(\.zoomNS) private var ns
     let board: String
     let picks: [HGSeries]
     @Binding var index: Int
@@ -493,6 +499,7 @@ private struct PosterHero: View {
                 HStack(alignment: .top, spacing: 14) {
                     CoverView(url: s.cover, corner: 12)
                         .frame(width: 176, height: 99)
+                        .zoomSource(s.id, ns)
                         .overlay(alignment: .bottomTrailing) { if let p = HomeFmt.progress(s) { HomeBadge(text: p).padding(5) } }
                         .shadow(color: .black.opacity(0.45), radius: 12, y: 8)
                         .accessibilityIdentifier("home.hero.cover")
@@ -525,6 +532,7 @@ private struct PosterHero: View {
             HStack(alignment: .center, spacing: 16) {
                 CoverView(url: s.cover, corner: 12)
                     .frame(width: 147, height: 196)
+                    .zoomSource(s.id, ns)
                     .overlay(alignment: .bottomTrailing) { if let p = HomeFmt.progress(s) { HomeBadge(text: p).padding(6) } }
                     .shadow(color: .black.opacity(0.45), radius: 12, y: 8)
                 info(s, rank: rank, lines: 3)
@@ -639,6 +647,7 @@ struct HomeSection: View {
 /// 卡片按来源封面比例：短剧 3:4 竖海报（三列），长视频站 16:9（两列）。
 /// 封面下方片名（两行内）+ 一行类型/集数；右下角只保留「全 N 集 / 更新至 N 集」小角标。
 struct HomePosterCard: View {
+    @Environment(\.zoomNS) private var ns
     let series: HGSeries
     var body: some View {
         let landscape = series.isLandscapeCover
@@ -647,6 +656,7 @@ struct HomePosterCard: View {
                 .aspectRatio(landscape ? 16/9 : 3/4, contentMode: .fit)
                 .overlay { CoverView(url: series.cover, corner: 0) }
                 .clipShape(RoundedRectangle(cornerRadius: landscape ? 12 : 10, style: .continuous))
+                .zoomSource(series.id, ns)
                 .overlay(alignment: .bottomTrailing) {
                     if let p = HomeFmt.progress(series) { HomeBadge(text: p).padding(5) }
                 }

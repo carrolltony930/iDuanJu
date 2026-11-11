@@ -67,7 +67,7 @@ struct ActorRankList: View {
                             .buttonStyle(.plain)
                             .onAppear { if a.id == list.last?.id { Task { await store.loadMore() } } }
                     }
-                    if store.loading { ProgressView().tint(.white).padding() }
+                    if store.loading { ProgressView().padding() }
                     else if !store.hasMore { Text("已经到底了").font(.caption).foregroundStyle(STVTheme.secondary).padding() }
                 }.padding(.horizontal, 16)
             }

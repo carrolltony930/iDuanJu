@@ -49,7 +49,7 @@ struct SeasonPickerSheet: View {
                                         if let l = SeasonStore.label(s, in: seasons) {
                                             Text(l).font(.caption.weight(.bold))
                                                 .padding(.horizontal, 6).padding(.vertical, 2)
-                                                .background((on ? STVTheme.accent : Color.white).opacity(0.16), in: Capsule())
+                                                .background((on ? STVTheme.accent : STVTheme.text).opacity(0.12), in: Capsule())
                                         }
                                         if on { Text("正在播放").font(.caption2.weight(.semibold)).foregroundStyle(STVTheme.accent) }
                                     }
@@ -110,7 +110,7 @@ struct ActorAvatar: View {
     var body: some View {
         CoverView(url: url, corner: size / 2)
             .frame(width: size, height: size)
-            .overlay { Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.8) }
+            .overlay { Circle().strokeBorder(STVTheme.text.opacity(0.12), lineWidth: 0.8) }
     }
 }
 

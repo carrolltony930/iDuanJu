@@ -4,6 +4,7 @@ struct LibraryListView: View {
     enum Kind { case favorites, history }
     let kind: Kind
     private let library = LibraryStore.shared
+    @Environment(\.zoomNS) private var ns
     var body: some View {
         ScrollView {
             if kind == .favorites {
@@ -16,7 +17,7 @@ struct LibraryListView: View {
                         ForEach(library.continueWatching) { p in
                             NavigationLink(value: Route.series(p.series)) {
                                 HStack(spacing: 12) {
-                                    CoverView(url: p.series.cover, corner: 8).frame(width: 64, height: 86)
+                                    CoverView(url: p.series.cover, corner: 8).frame(width: 64, height: 86).zoomSource(p.series.id, ns)
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text(p.series.title).font(.headline).foregroundStyle(STVTheme.text).lineLimit(1)
                                         Text(p.series.source.isLongVideo ? p.resumeLabel : "看到第\(p.episodeNumber)集 · \(Fmt.duration(Int(p.seconds)))").font(.caption).foregroundStyle(STVTheme.secondary)

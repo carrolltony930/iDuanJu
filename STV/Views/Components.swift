@@ -81,7 +81,7 @@ struct PillTabs<T: Hashable>: View {
                     Button { withAnimation(.snappy) { selection = it } } label: {
                         Text(label(it))
                             .font(.subheadline.weight(on ? .semibold : .regular))
-                            .foregroundStyle(on ? Color.black.opacity(0.9) : STVTheme.secondary)
+                            .foregroundStyle(on ? STVTheme.bg : STVTheme.secondary)
                             .padding(.horizontal, 14).padding(.vertical, 6)
                             .background(on ? STVTheme.text : STVTheme.glass, in: Capsule())
                     }.buttonStyle(.plain)
@@ -111,7 +111,7 @@ struct ChipFlow: View {
                         }
                         .font(.subheadline).lineLimit(1)
                         .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(Color.white.opacity(0.09), in: Capsule())
+                        .background(STVTheme.text.opacity(0.09), in: Capsule())
                     }.buttonStyle(.plain)
                 }
             }.padding(.horizontal, 16)
@@ -288,6 +288,7 @@ struct TopRankCard: View {
 }
 
 struct CompactRankRow: View {
+    @Environment(\.zoomNS) private var ns
     let series: HGSeries
     let rank: Int
     var body: some View {
@@ -295,6 +296,7 @@ struct CompactRankRow: View {
             HStack(spacing: 10) {
                 CoverView(url: series.cover, corner: 6)
                     .frame(width: 46, height: 62)
+                    .zoomSource(series.id, ns)
                     .overlay(alignment: .topTrailing) {
                         Text("\(rank)").font(.caption2.weight(.heavy)).foregroundStyle(.white)
                             .padding(.horizontal, 4).padding(.vertical, 1)
@@ -328,6 +330,7 @@ struct SectionHeader: View {
 // MARK: Continue watching
 
 struct ContinueRow: View {
+    @Environment(\.zoomNS) private var ns
     let items: [WatchProgress]
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -341,6 +344,7 @@ struct ContinueRow: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 CoverView(url: p.series.cover, corner: 10)
                                     .frame(width: 112, height: 150)
+                                    .zoomSource(p.series.id, ns)
                                     .overlay(alignment: .bottom) {
                                         VStack(spacing: 4) {
                                             Spacer()

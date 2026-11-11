@@ -115,6 +115,12 @@ final class ChannelMangaUITests: XCTestCase {
         XCTAssertTrue(waitLabel(counter, "2 / 5"), "page turn failed: \(counter.label)")
         el("manga.reader").swipeLeft()
         XCTAssertTrue(waitLabel(counter, "3 / 5"), "page turn failed: \(counter.label)")
+        // Tap zones: right third = next page, left third = previous.
+        let r = el("manga.reader")
+        r.coordinate(withNormalizedOffset: CGVector(dx: 0.88, dy: 0.5)).tap()
+        XCTAssertTrue(waitLabel(counter, "4 / 5"), "right tap did not turn the page: \(counter.label)")
+        r.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)).tap()
+        XCTAssertTrue(waitLabel(counter, "3 / 5"), "left tap did not go back: \(counter.label)")
         shot("manga_02_reader_paged")
         tap(el("manga.close"))
         // Progress remembered → 续读.

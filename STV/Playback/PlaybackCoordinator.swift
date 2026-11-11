@@ -117,7 +117,25 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     /// Aspect fill (view toggle) applied to whichever core is mounted.
     @ObservationIgnored var fill = false { didSet { engine.fill = fill } }
     /// Current playhead of the active core (danmaku clock).
-    var playhead: Double { engine.currentTime }
+    /// The core's clock only moves ~5×/s (Aether publishes at ~10 Hz), so drawing straight from it makes
+    /// scrolling comments step. Between core ticks this extrapolates with wall time at the playback rate;
+    /// a jump (seek, stall, new episode) re-anchors immediately, small drift is pulled in gently.
+    var playhead: Double {
+        let raw = engine.currentTime, now = CACurrentMediaTime()
+        let rate = paused || readyIndex == nil ? 0 : min(playbackRate, engine.maxRate)
+        guard let a = clockAnchor else { clockAnchor = (raw, now, raw); return raw }
+        var est = a.time + (now - a.at) * rate
+        if raw != a.raw {
+            // New core sample: snap if far off, otherwise ease towards it so motion stays continuous.
+            if abs(raw - est) > 0.35 { est = raw } else { est += (raw - est) * 0.25 }
+            clockAnchor = (est, now, raw)
+        } else if rate == 0 || est - raw > 0.6 {
+            // Paused, or the core stopped advancing (buffering): hold at the core time.
+            est = raw; clockAnchor = (raw, now, raw)
+        }
+        return est
+    }
+    @ObservationIgnored private var clockAnchor: (time: Double, at: CFTimeInterval, raw: Double)?
     private var prepared: [Int: Source] = [:]
     private var tasks: [Int: Task<Source, Error>] = [:]
     private var observer: Any?
@@ -417,11 +435,18 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         activate(index)
     }
 
+    /// Last frame of the episode being left, shown over the (cleared) video surface until the next one is
+    /// ready, so switching never flashes black.
+    private(set) var heldFrame: (image: UIImage, index: Int)?
+    /// The feed calls this once the swipe has settled on a ready episode.
+    func releaseHeldFrame() { if heldFrame != nil { heldFrame = nil } }
+
     func activate(_ i: Int) {
         guard i == current, episodes.indices.contains(i), observer != nil else { return }
         save(force: true)
         let token = UUID()
         activation = token
+        if let r = readyIndex, heldFrame == nil, let img = Self.snapshot(engine.surface) { heldFrame = (img, r) }
         readyIndex = nil
         engine.pause()
         time = 0; loadedUntil = 0
@@ -547,6 +572,15 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         errors[i] = Self.failureText(error)
     }
 
+    /// What the video surface shows right now (Metal / sample-buffer layers included).
+    static func snapshot(_ v: UIView) -> UIImage? {
+        guard v.bounds.width > 0, v.bounds.height > 0, v.window != nil else { return nil }
+        let f = UIGraphicsImageRendererFormat.preferred(); f.opaque = true
+        return UIGraphicsImageRenderer(bounds: v.bounds, format: f).image { _ in
+            _ = v.drawHierarchy(in: v.bounds, afterScreenUpdates: false)
+        }
+    }
+
     /// Scrub thumbnails come from a separate AVURLAsset (any core): files and progressive MP4s only.
     static func thumbnailAsset(_ src: Source, stream: HGStream?) -> AVAsset? {
         switch src {
@@ -602,6 +636,10 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
             guard let s = stream else { throw ProviderError.upstream("没有可用的视频流") }
             switch s.kind {
             case .mp4Cenc:
+                // Already decrypted on disk → play the file. Otherwise stream-decrypt through the proxy; the
+                // whole-file download + decrypt is only the fallback (not streamable, or streaming failed once).
+                if let f = EpisodePlaybackLoader.cachedFile(vid: ep.vid, stream: s) { return .file(f) }
+                if !bypass, let src = await self?.cencStream(s, index: i) { return src }
                 return .file(try await EpisodePlaybackLoader.playableFile(vid: ep.vid, stream: s))
             case .mp4Clear where s.url.hasPrefix("tdfile://"):
                 // TDLib video: plain progressive file from the loopback proxy, downloaded window by window.
@@ -658,6 +696,27 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         prefetchTokens[i] = tok
         return .direct(u)
     }
+
+    /// 红果 CENC MP4 served decrypted by the loopback proxy while it downloads (nil: not streamable).
+    private func cencStream(_ s: HGStream, index i: Int) async -> Source? {
+        guard let proxied = LocalHLSProxy.shared.cencMP4URL(s.url, headers: s.headers, key: s.key, budget: Self.cencBudget),
+              let u = URL(string: proxied), let tok = LocalHLSProxy.token(of: proxied) else { return nil }
+        do {
+            try await LocalHLSProxy.shared.prepareCENC(proxied)
+        } catch {
+            #if DEBUG
+            NSLog("%@", "[STV] cenc stream unavailable → full download: \(error.localizedDescription)")
+            #endif
+            LocalHLSProxy.shared.release(tok)
+            return nil
+        }
+        if let old = prefetchTokens[i], old != tok { LocalHLSProxy.shared.release(old) }
+        prefetchTokens[i] = tok
+        return .direct(u)
+    }
+
+    /// Read-ahead for a streamed 红果 episode (a 1080p episode is roughly 5–40 MB).
+    static let cencBudget = 64 * 1_048_576
 
     private func tdStream(_ ref: TDFileRef, source: TDFileStreamSource, budget: Int, index i: Int) -> Source? {
         guard let proxied = LocalHLSProxy.shared.tdURL(ref, budget: budget, source: source),
@@ -749,12 +808,12 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         }
         // MP4 units are chunk indices; map playback time to a chunk by fraction of the duration.
         let pos: Double
-        if chosen[i]?.kind == .mp4Clear, duration > 0, let st = LocalHLSProxy.shared.status(tok), st.total >= 0 {
+        if chosen[i]?.kind.isProgressiveMP4 == true, duration > 0, let st = LocalHLSProxy.shared.status(tok), st.total >= 0 {
             pos = (t / duration) * Double(LocalHLSProxy.shared.mp4Chunks(tok))
         } else { pos = t }
         LocalHLSProxy.shared.setPosition(tok, pos)
         if let st = LocalHLSProxy.shared.status(tok) {
-            let until = chosen[i]?.kind == .mp4Clear
+            let until = chosen[i]?.kind.isProgressiveMP4 == true
                 ? min(duration, st.until / Double(max(1, LocalHLSProxy.shared.mp4Chunks(tok))) * duration) : st.until
             prebuffer = (st.bytes, until, st.lowStorage)
         }

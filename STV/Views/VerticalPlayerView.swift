@@ -49,6 +49,10 @@ struct PlayerScreen: View {
     @State private var pendingCancel = false
     @State private var speedBaseIndex = 0
     @State private var lastStepOffset = 0
+    /// Portrait feed content offset (pt): the shared video layer rides along with the page being swiped.
+    @State private var feedScrollY: CGFloat = 0
+    /// Running double-tap seek (+10/+20/… s) and which side it is on; drives the side bubble.
+    @State private var seekRun: (total: Int, at: Date)?
     @Environment(\.verticalSizeClass) private var vClass
     @Environment(\.dismiss) private var dismiss
     private let library = LibraryStore.shared
@@ -94,8 +98,15 @@ struct PlayerScreen: View {
                     Color.black
                     // A single in-window layer remains the PiP source across paging, rotation and buffering.
                     PlayerLayerView(coordinator: co, fill: fillScreen, engine: co.engineKind)
-                        .frame(width: area.width, height: area.height).offset(x: area.minX, y: area.minY)
+                        .accessibilityElement().accessibilityIdentifier("player.video").accessibilityValue(fillScreen ? "fill" : "fit")
+                        .frame(width: area.width, height: area.height).offset(x: area.minX, y: area.minY - pageDrift(co.current ?? 0, page: full.height))
                         .allowsHitTesting(false)
+                    if let held = co.heldFrame, !landscape {
+                        // Previous episode's last frame, riding with the swipe until the next one is on screen.
+                        Image(uiImage: held.image).resizable()
+                            .frame(width: area.width, height: area.height).offset(x: area.minX, y: area.minY - pageDrift(held.index, page: full.height))
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
                     Group {
                         if co.current != nil {
                             if landscape { stage(co.current!) } else { portraitFeed }
@@ -157,12 +168,21 @@ struct PlayerScreen: View {
                     if let p = panel, !locked {
                         popover(p, full: full, ins: ins)
                     }
+                    if let run = seekRun {
+                        Label("\(run.total > 0 ? "+" : "−")\(abs(run.total)) 秒", systemImage: run.total > 0 ? "forward.fill" : "backward.fill")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                            .padding(.horizontal, 16).padding(.vertical, 10)
+                            .background(.black.opacity(0.55), in: Capsule())
+                            .position(x: run.total > 0 ? full.width * 0.75 : full.width * 0.25, y: landscape ? full.height / 2 - 70 : rect.midY - 70)
+                            .transition(.opacity).allowsHitTesting(false)
+                            .accessibilityIdentifier("player.seekRun")
+                    }
                     if let osd {
                         Text(osd).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
                             .padding(.horizontal, 16).padding(.vertical, 10)
                             .background(.black.opacity(0.62), in: Capsule())
                             .position(x: full.width / 2, y: landscape ? full.height / 2 : rect.midY - 70)
-                            .transition(.opacity).allowsHitTesting(false)
+                            .transition(.opacity).allowsHitTesting(false).accessibilityIdentifier("player.osd")
                     }
                     if let h = adjuster.hud, !speedMode {
                         PlayerAdjustHUD(side: h.side, value: h.value)
@@ -272,7 +292,27 @@ struct PlayerScreen: View {
         .scrollTargetBehavior(.paging)
         .scrollIndicators(.hidden)
         .scrollPosition(id: Binding(get: { co.current }, set: { co.select($0) }))
+        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, y in feedScrollY = y }
+        .sensoryFeedback(.selection, trigger: co.current)
+        .onChange(of: co.readyIndex) { _, _ in releaseHeldIfSettled() }
+        .onScrollPhaseChange { _, phase in feedSettled = phase == .idle; releaseHeldIfSettled() }
+        .onChange(of: co.current) { old, new in
+            if old != nil, let new, co.episodes.indices.contains(new) { showOSD("第\(co.episodes[new].ep)集") }
+        }
         .scrollDisabled(speedMode || scrubbing || co.pipActive || panel != nil)
+    }
+
+    /// Drop the previous episode's still once the new one is playing and the page has stopped moving.
+    private func releaseHeldIfSettled() {
+        guard co.heldFrame != nil, let r = co.readyIndex, r == co.current, feedSettled else { return }
+        co.releaseHeldFrame()
+    }
+    @State private var feedSettled = true
+
+    /// Offset of page `index` from rest (portrait), capped at one page either way.
+    private func pageDrift(_ index: Int, page: CGFloat) -> CGFloat {
+        guard !landscape, page > 0 else { return 0 }
+        return max(-page, min(page, feedScrollY - CGFloat(index) * page))
     }
 
     private func stage(_ i: Int) -> some View {
@@ -288,10 +328,22 @@ struct PlayerScreen: View {
                     landscape: landscape,
                     onAdjustBegan: { adjuster.begin($0) },
                     onAdjustChanged: { adjuster.change($0, fraction: $1) },
-                    onAdjustEnded: { adjuster.end() }
+                    onAdjustEnded: { adjuster.end() },
+                    onPinchFill: { fill in
+                        guard fill != fillScreen else { return }
+                        withAnimation(.easeInOut(duration: 0.25)) { fillScreen = fill }
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        showOSD(fill ? "画面：铺满全屏" : "画面：完整自适应")
+                    }
                 )
             } else {
-                PosterBackdrop(url: series.cover)
+                // Held still on the episode being left; the new episode's page stays see-through so the video
+                // layer (riding with it) is visible the moment its first frame lands — no poster cutting in.
+                if (i == co.heldFrame?.index || i == co.current) && co.errors[i] == nil {
+                    Color.clear
+                } else {
+                    PosterBackdrop(url: series.cover)
+                }
                 if let error = co.errors[i] {
                     VStack(spacing: 12) {
                         Text(error).font(.footnote).multilineTextAlignment(.center)
@@ -667,8 +719,19 @@ struct PlayerScreen: View {
     /// Double tap: left third −10 s, right third +10 s, middle play / pause.
     private func handleDoubleTap(_ x: CGFloat) {
         guard !locked else { return }
-        if x < 1.0 / 3 { co.seek(by: -10); showOSD("−10 秒") }
-        else if x > 2.0 / 3 { co.seek(by: 10); showOSD("+10 秒") }
+        if x < 1.0 / 3 || x > 2.0 / 3 {
+            let step = x > 2.0 / 3 ? 10 : -10, now = Date()
+            // Same direction within the streak window adds up: +10, +20, +30 …
+            let total = (seekRun.flatMap { now.timeIntervalSince($0.at) < 0.9 && ($0.total > 0) == (step > 0) ? $0.total : nil } ?? 0) + step
+            co.seek(by: Double(step))
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeOut(duration: 0.12)) { seekRun = (total, now) }
+            flashChrome()
+            Task {
+                try? await Task.sleep(for: .seconds(1.2))
+                if seekRun?.at == now { withAnimation(.easeIn(duration: 0.2)) { seekRun = nil } }
+            }
+        }
         else { co.togglePause(); flashChrome() }
     }
 
@@ -778,7 +841,7 @@ struct PlayerScreen: View {
     /// STV_LANDSCAPE=1, STV_FILL=1, STV_KEEP_CHROME=1.
     private func screenshotHooks() async {
         let env = ProcessInfo.processInfo.environment
-        if env["STV_FILL"] == "1" { fillScreen = true }
+        if let v = env["STV_FILL"] { fillScreen = v == "1" }
         if env["STV_KEEP_CHROME"] == "1" { noAutoHide = true }
         #if DEBUG
         if let a = env["STV_ADJUST"], !a.isEmpty {
@@ -913,12 +976,14 @@ struct PlayerTouchCatcher: UIViewRepresentable {
     var onAdjustBegan: (AdjustSide) -> Void = { _ in }
     var onAdjustChanged: (AdjustSide, Double) -> Void = { _, _ in }
     var onAdjustEnded: () -> Void = {}
+    /// Pinch out → fill the screen, pinch in → fit (true = fill).
+    var onPinchFill: (Bool) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> CatcherView {
         let v = CatcherView()
-        v.isMultipleTouchEnabled = false
+        v.isMultipleTouchEnabled = true   // pinch to fill / fit
         v.backgroundColor = .clear
         context.coordinator.bind(to: v)
         return v
@@ -937,11 +1002,13 @@ struct PlayerTouchCatcher: UIViewRepresentable {
         c.onAdjustBegan = onAdjustBegan
         c.onAdjustChanged = onAdjustChanged
         c.onAdjustEnded = onAdjustEnded
+        c.onPinchFill = onPinchFill
+        c.pinch.isEnabled = !locked && !speedMode
         // While speed HUD is up, keep catcher receiving the finger; chrome is hit-disabled.
         uiView.isUserInteractionEnabled = true
         c.longPress.isEnabled = !locked
         c.adjustPan.isEnabled = !locked
-        c.doubleTap.isEnabled = !speedMode && !locked
+        c.doubleTapEnabled = !speedMode && !locked
         c.tap.isEnabled = !speedMode
     }
 
@@ -956,8 +1023,15 @@ struct PlayerTouchCatcher: UIViewRepresentable {
         var onAdjustBegan: (AdjustSide) -> Void = { _ in }
         var onAdjustChanged: (AdjustSide, Double) -> Void = { _, _ in }
         var onAdjustEnded: () -> Void = {}
+        var onPinchFill: (Bool) -> Void = { _ in }
+        let pinch = UIPinchGestureRecognizer()
         let tap = UITapGestureRecognizer()
-        let doubleTap = UITapGestureRecognizer()
+        /// Double taps are recognised from single-tap timing (no UITapGestureRecognizer(2)), so a single tap
+        /// acts at once instead of waiting ~0.3 s for a second tap that may never come.
+        var doubleTapEnabled = true
+        private var lastTap: (at: Date, x: CGFloat)?
+        /// After a side double tap, further taps on that side keep seeking until this time.
+        private var streak: (until: Date, right: Bool)?
         let longPress = UILongPressGestureRecognizer()
         /// Brightness / volume vertical pan (edge strips in portrait, half screens in landscape).
         let adjustPan = UIPanGestureRecognizer()
@@ -981,27 +1055,39 @@ struct PlayerTouchCatcher: UIViewRepresentable {
             adjustPan.delegate = self
             adjustPan.maximumNumberOfTouches = 1
             adjustPan.cancelsTouchesInView = false
-            doubleTap.numberOfTapsRequired = 2
-            doubleTap.addTarget(self, action: #selector(handleDoubleTap))
-            doubleTap.delegate = self
-            doubleTap.cancelsTouchesInView = false
-            view.addGestureRecognizer(doubleTap)
-            tap.require(toFail: doubleTap)
             view.addGestureRecognizer(tap)
             view.addGestureRecognizer(longPress)
             view.addGestureRecognizer(adjustPan)
+            pinch.addTarget(self, action: #selector(handlePinch))
+            pinch.delegate = self
+            pinch.cancelsTouchesInView = false
+            view.addGestureRecognizer(pinch)
             // Prefer long-press over tap when both could fire (hold, don't tap).
             tap.require(toFail: longPress)
         }
 
         @objc private func handleTap(_ g: UITapGestureRecognizer) {
-            guard g.state == .ended else { return }
-            onTap()
+            guard g.state == .ended, let view else { return }
+            tapped(at: g.location(in: view), in: view)
         }
 
-        @objc private func handleDoubleTap(_ g: UITapGestureRecognizer) {
-            guard g.state == .ended, let view, view.bounds.width > 0 else { return }
-            onDoubleTap(g.location(in: view).x / view.bounds.width)
+        /// Single tap now; second tap within 0.3 s near the first = double tap; side streak keeps seeking.
+        private func tapped(at p: CGPoint, in view: UIView) {
+            let x = p.x / max(1, view.bounds.width), now = Date()
+            let side: Bool? = x < 1.0 / 3 ? false : (x > 2.0 / 3 ? true : nil)
+            guard doubleTapEnabled else { onTap(); return }
+            if let s = streak, now < s.until, side == s.right {
+                streak = (now.addingTimeInterval(0.7), s.right)
+                onDoubleTap(x); return
+            }
+            streak = nil
+            if let l = lastTap, now.timeIntervalSince(l.at) < 0.3, abs(l.x - x) < 0.2 {
+                lastTap = nil
+                if let side { streak = (now.addingTimeInterval(0.7), side) }
+                onDoubleTap(x); return
+            }
+            lastTap = (now, x)
+            onTap()
         }
 
         @objc private func handleLongPress(_ g: UILongPressGestureRecognizer) {
@@ -1026,6 +1112,13 @@ struct PlayerTouchCatcher: UIViewRepresentable {
             default:
                 break
             }
+        }
+
+        @objc private func handlePinch(_ g: UIPinchGestureRecognizer) {
+            // Decide once per pinch, as soon as it is clearly in or out.
+            guard g.state == .changed, abs(g.scale - 1) > 0.12 else { return }
+            onPinchFill(g.scale > 1)
+            g.isEnabled = false; g.isEnabled = true   // cancel the rest of this pinch
         }
 
         @objc private func handleAdjust(_ g: UIPanGestureRecognizer) {

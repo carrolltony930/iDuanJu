@@ -9,9 +9,19 @@ enum EpisodePlaybackLoader {
         return dir
     }
 
-    static func playableFile(vid: String, stream: HGStream) async throws -> URL {
+    private static func fileURL(vid: String, stream: HGStream) -> URL {
         let safeId = (stream.streamId ?? stream.quality ?? "default").filter { $0.isLetter || $0.isNumber || $0 == "_" }
-        let out = cacheDir.appendingPathComponent("\(vid)-\(safeId).mp4")
+        return cacheDir.appendingPathComponent("\(vid)-\(safeId).mp4")
+    }
+
+    /// Previously decrypted copy of this stream, if still on disk.
+    static func cachedFile(vid: String, stream: HGStream) -> URL? {
+ let out = fileURL(vid: vid, stream: stream)
+        return FileManager.default.fileExists(atPath: out.path) ? out : nil
+    }
+
+    static func playableFile(vid: String, stream: HGStream) async throws -> URL {
+        let out = fileURL(vid: vid, stream: stream)
         if FileManager.default.fileExists(atPath: out.path) { return out }
         guard let src = URL(string: stream.url) else { throw URLError(.badURL) }
 

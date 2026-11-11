@@ -2,6 +2,7 @@ import SwiftUI
 
 /// 漫画 home: source switch, category chips, cover grid, search, 继续阅读 / 收藏.
 struct MangaHomeView: View {
+    @Environment(\.zoomNS) private var ns
     var embedded = false
     @State private var source: MangaSourceID = .baozi
     @State private var category: MangaCategory?
@@ -98,6 +99,7 @@ struct MangaHomeView: View {
                         NavigationLink(value: Route.manga(p.item)) {
                             VStack(alignment: .leading, spacing: 4) {
                                 CoverView(url: p.item.cover, headers: p.item.source.provider.imageHeaders, corner: 8).frame(width: 84, height: 112)
+                                    .zoomSource("manga:" + p.item.id, ns)
                                 Text(p.item.title).font(.caption).lineLimit(1).foregroundStyle(STVTheme.text)
                                 Text(p.chapterTitle).font(.caption2).lineLimit(1).foregroundStyle(STVTheme.secondary)
                             }.frame(width: 84)
@@ -110,10 +112,12 @@ struct MangaHomeView: View {
 }
 
 struct MangaCell: View {
+    @Environment(\.zoomNS) private var ns
     let item: MangaItem
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             CoverView(url: item.cover, headers: item.source.provider.imageHeaders, corner: 10).aspectRatio(3 / 4, contentMode: .fit)
+                .zoomSource("manga:" + item.id, ns)
             Text(item.title).font(.caption.weight(.semibold)).foregroundStyle(STVTheme.text).lineLimit(1)
             Text(item.tags.prefix(2).joined(separator: " · ").isEmpty ? item.author : item.tags.prefix(2).joined(separator: " · "))
                 .font(.caption2).foregroundStyle(STVTheme.secondary).lineLimit(1)
@@ -152,6 +156,7 @@ struct MangaLibraryView: View {
 }
 
 struct MangaDetailView: View {
+    @Environment(\.zoomNS) private var ns
     let item: MangaItem
     @State private var detail: MangaDetail?
     @State private var error: String?
@@ -200,6 +205,7 @@ struct MangaDetailView: View {
         }
         .background(STVTheme.bg.ignoresSafeArea())
         .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+        .zoomDestination("manga:" + item.id, ns)
         .task {
             do { detail = try await provider.detail(item) } catch { self.error = error.localizedDescription }
         }
@@ -236,7 +242,7 @@ struct MangaDetailView: View {
             }.buttonStyle(.borderless).accessibilityIdentifier("manga.dl.\(c.index)")
         }
         .padding(.vertical, 11)
-        .overlay(alignment: .bottom) { Divider().overlay(Color.white.opacity(0.06)) }
+        .overlay(alignment: .bottom) { Divider().overlay(STVTheme.text.opacity(0.06)) }
     }
 }
 
@@ -246,6 +252,8 @@ struct MangaReaderView: View {
     let chapters: [MangaChapter]
     @State var index: Int
     var startPage = 0
+    /// Chapter `startPage` belongs to (the one the reader opened on); other chapters start at page 1.
+    @State private var startChapter: Int?
     @AppStorage("stv.manga.vertical") private var vertical = true
     @State private var pages: [String] = []
     @State private var page = 0
@@ -277,24 +285,28 @@ struct MangaReaderView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("manga.reader")
+        .preferredColorScheme(.dark)
         .onChange(of: vertical) { _, _ in visible = [] }
     }
 
     private var verticalReader: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(pages.indices, id: \.self) { i in
-                        MangaPageImage(url: pages[i], headers: provider.imageHeaders)
-                            .id(i)
-                            // Current page = topmost page on screen.
-                            .onAppear { visible.insert(i); page = visible.min() ?? i }
-                            .onDisappear { visible.remove(i); if let m = visible.min() { page = m } }
-                            .accessibilityIdentifier("manga.page.\(i)")
+            // Zoom = wider content (pages fit width × scale), so both axes scroll to every edge.
+            GeometryReader { geo in
+                ScrollView(scale > 1.01 ? [.vertical, .horizontal] : .vertical) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(pages.indices, id: \.self) { i in
+                            MangaPageImage(url: pages[i], headers: provider.imageHeaders)
+                                .id(i)
+                                // Current page = topmost page on screen.
+                                .onAppear { visible.insert(i); page = visible.min() ?? i }
+                                .onDisappear { visible.remove(i); if let m = visible.min() { page = m } }
+                                .accessibilityIdentifier("manga.page.\(i)")
+                        }
+                        chapterEnd
                     }
-                    chapterEnd
+                    .frame(width: geo.size.width * scale)
                 }
-                .scaleEffect(scale, anchor: .top)
             }
             .gesture(MagnifyGesture().onChanged { scale = max(1, min(3, baseScale * $0.magnification)) }.onEnded { _ in baseScale = scale })
             .onTapGesture(count: 2) { withAnimation { scale = scale > 1 ? 1 : 2; baseScale = scale } }
@@ -312,7 +324,27 @@ struct MangaReaderView: View {
             chapterEnd.tag(pages.count)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .onTapGesture { withAnimation { chrome.toggle() } }
+        // Zoomed: drags pan the image instead of turning the page (zoom out, or double tap, to page again).
+        .scrollDisabled(zoomed)
+        .onTapGesture(coordinateSpace: .global) { p in pagedTap(p) }
+    }
+
+    /// Paged mode tap zones: left third = previous page, right third = next (past the last page → next
+    /// chapter), middle = show / hide the bar. Zoomed pages leave taps to the image.
+    private func pagedTap(_ p: CGPoint) {
+        let w = UIScreen.main.bounds.width
+        guard !zoomed, w > 0 else { withAnimation { chrome.toggle() }; return }
+        let x = p.x / w
+        if x < 1.0 / 3, page > 0 {
+            withAnimation(.easeOut(duration: 0.22)) { page -= 1 }
+        } else if x > 2.0 / 3 {
+            if page < pages.count { withAnimation(.easeOut(duration: 0.22)) { page += 1 } }
+            else if index + 1 < chapters.count { index += 1 }
+        } else {
+            withAnimation { chrome.toggle() }
+            return
+        }
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 
     private var chapterEnd: some View {
@@ -359,7 +391,8 @@ struct MangaReaderView: View {
         else {
             do { pages = try await provider.pages(item, chapter) } catch { self.error = error.localizedDescription; return }
         }
-        page = min(startPage, max(0, pages.count - 1))
+        if startChapter == nil { startChapter = index }
+        page = index == startChapter ? min(startPage, max(0, pages.count - 1)) : 0
         store.record(item, chapter, page: page, of: pages.count)
         preload(from: page)
     }

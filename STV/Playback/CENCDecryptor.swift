@@ -24,6 +24,26 @@ enum CENCDecryptor {
     @discardableResult
     static func decrypt(_ bytes: inout [UInt8], keyHex: String) throws -> Bool {
         guard let key = hexBytes(keyHex), key.count == 16 else { throw Failure.badKey }
+        guard let (jobs, patches) = try collect(bytes) else { return false }
+        try bytes.withUnsafeMutableBytes { raw in
+            let base = raw.baseAddress!
+            for job in jobs {
+                try Task.checkCancellation()
+                var pieces: [(UnsafeMutableRawPointer, Int)] = []
+                for (off, len) in job.ranges where len > 0 {
+                    guard off >= 0, off + len <= raw.count else { throw Failure.malformed("样本越界") }
+                    pieces.append((base + off, len))
+                }
+                try ctr(key: key, iv: job.iv, skip: 0, pieces)
+            }
+        }
+        for (off, val) in patches { for (i, v) in val.enumerated() { bytes[off + i] = v } }
+        return true
+    }
+
+    /// Sample jobs + header patches (nil: not encrypted). Only metadata boxes are read, so for a
+    /// progressive file `bytes` may be just the prefix up to the end of `moov`.
+    private static func collect(_ bytes: [UInt8]) throws -> ([SampleJob], [(Int, [UInt8])])? {
         var tracks: [UInt32: TrackInfo] = [:]
         var patches: [(Int, [UInt8])] = []
         var trexSizes: [UInt32: UInt32] = [:]
@@ -44,7 +64,7 @@ enum CENCDecryptor {
             if let s = info.sencJobs { jobs += s; info.sencJobs = nil }
             tracks[info.trackId] = info
         }
-        if tracks.isEmpty { return false }
+        if tracks.isEmpty { return nil }
 
         // Fragments
         for m in top where m.type == "moof" {
@@ -53,27 +73,112 @@ enum CENCDecryptor {
             }
         }
 
-        try bytes.withUnsafeMutableBytes { raw in
-            let base = raw.baseAddress!
-            for job in jobs {
-                try Task.checkCancellation()
-                var iv = job.iv
-                if iv.count < 16 { iv += [UInt8](repeating: 0, count: 16 - iv.count) }
-                var ref: CCCryptorRef?
-                var st = CCCryptorCreateWithMode(CCOperation(kCCEncrypt), CCMode(kCCModeCTR), CCAlgorithm(kCCAlgorithmAES),
-                                                 CCPadding(ccNoPadding), iv, key, 16, nil, 0, 0, 0, &ref)
-                guard st == kCCSuccess, let ref else { throw Failure.crypto(st) }
-                defer { CCCryptorRelease(ref) }
-                for (off, len) in job.ranges where len > 0 {
-                    guard off >= 0, off + len <= raw.count else { throw Failure.malformed("样本越界") }
-                    var moved = 0
-                    st = CCCryptorUpdate(ref, base + off, len, base + off, len, &moved)
-                    guard st == kCCSuccess else { throw Failure.crypto(st) }
+        return (jobs, patches)
+    }
+
+    /// AES-CTR in place over `pieces` as one continuous keystream that starts `skip` bytes past `iv`.
+    private static func ctr(key: [UInt8], iv raw: [UInt8], skip: Int, _ pieces: [(UnsafeMutableRawPointer, Int)]) throws {
+        var iv = raw
+        if iv.count < 16 { iv += [UInt8](repeating: 0, count: 16 - iv.count) }
+        var carry = skip / 16  // 128-bit big-endian counter += skip / 16
+        var i = 15
+        while carry > 0, i >= 0 {
+            let v = Int(iv[i]) + carry
+            iv[i] = UInt8(v & 0xFF); carry = v >> 8; i -= 1
+        }
+        var ref: CCCryptorRef?
+        var st = CCCryptorCreateWithMode(CCOperation(kCCEncrypt), CCMode(kCCModeCTR), CCAlgorithm(kCCAlgorithmAES),
+                                         CCPadding(ccNoPadding), iv, key, 16, nil, 0, 0, 0, &ref)
+        guard st == kCCSuccess, let ref else { throw Failure.crypto(st) }
+        defer { CCCryptorRelease(ref) }
+        var moved = 0
+        if skip % 16 > 0 {
+            var pad = [UInt8](repeating: 0, count: skip % 16)
+            st = CCCryptorUpdate(ref, pad, pad.count, &pad, pad.count, &moved)
+            guard st == kCCSuccess else { throw Failure.crypto(st) }
+        }
+        for (p, len) in pieces {
+            st = CCCryptorUpdate(ref, p, len, p, len, &moved)
+            guard st == kCCSuccess else { throw Failure.crypto(st) }
+        }
+    }
+
+    // MARK: - Streaming (decrypt any byte range of a progressive file)
+
+    /// Decrypts arbitrary byte ranges of a progressive CENC MP4 using only its header, so the file can be
+    /// played while it downloads.
+    struct RangePlan: @unchecked Sendable {
+        /// Encrypted run: file offset, length, IV index, keystream offset inside its sample.
+        fileprivate struct Run { let start: Int; let len: Int; let iv: Int; let ks: Int }
+        fileprivate let key: [UInt8]
+        fileprivate let ivs: [[UInt8]]
+        fileprivate let runs: [Run]  // sorted by start, non-overlapping
+        fileprivate let patches: [(Int, [UInt8])]
+
+        /// Decrypts `data` (which begins at file offset `at`) in place and applies the header patches.
+        func apply(_ data: inout Data, at: Int) throws {
+            let end = at + data.count
+            var lo = 0, hi = runs.count  // first run ending after `at`
+            while lo < hi {
+                let m = (lo + hi) / 2
+                if runs[m].start + runs[m].len <= at { lo = m + 1 } else { hi = m }
+            }
+            try data.withUnsafeMutableBytes { raw in
+                let base = raw.baseAddress!
+                var k = lo
+                while k < runs.count, runs[k].start < end {
+                    let r = runs[k]
+                    let a = max(r.start, at), b = min(r.start + r.len, end)
+                    try CENCDecryptor.ctr(key: key, iv: ivs[r.iv], skip: r.ks + (a - r.start), [(base + (a - at), b - a)])
+                    k += 1
+                }
+            }
+            for (off, val) in patches where off < end && off + val.count > at {
+                for (i, v) in val.enumerated() where off + i >= at && off + i < end {
+                    data[data.startIndex + off + i - at] = v
                 }
             }
         }
-        for (off, val) in patches { for (i, v) in val.enumerated() { bytes[off + i] = v } }
-        return true
+    }
+
+    /// Plan from a file prefix that ends at or after `moov`. nil: not encrypted, or fragmented (moof).
+    static func rangePlan(header: [UInt8], keyHex: String) throws -> RangePlan? {
+        guard let key = hexBytes(keyHex), key.count == 16 else { throw Failure.badKey }
+        let top = boxes(header, 0, header.count)
+        guard top.contains(where: { $0.type == "moov" }), !top.contains(where: { $0.type == "moof" }),
+              let (jobs, patches) = try collect(header) else { return nil }
+        var ivs: [[UInt8]] = []
+        var runs: [RangePlan.Run] = []
+        for job in jobs {
+            ivs.append(job.iv)
+            var ks = 0
+            for (off, len) in job.ranges where len > 0 {
+                runs.append(.init(start: off, len: len, iv: ivs.count - 1, ks: ks))
+                ks += len
+            }
+        }
+        runs.sort { $0.start < $1.start }
+        for (a, b) in zip(runs, runs.dropFirst()) where a.start + a.len > b.start { throw Failure.malformed("样本重叠") }
+        return RangePlan(key: key, ivs: ivs, runs: runs, patches: patches)
+    }
+
+    /// Where `moov` ends, judged from a prefix: `.end(n)` found, `.more` need a longer prefix,
+    /// `.tail` moov comes after mdat (streaming not possible).
+    enum MoovLocation: Equatable { case end(Int), more, tail }
+    static func moovLocation(_ prefix: [UInt8]) -> MoovLocation {
+        var p = 0
+        while p + 8 <= prefix.count {
+            var size = Int(u32(prefix, p))
+            let type = fourcc(prefix, p + 4)
+            if size == 1 {
+                guard p + 16 <= prefix.count else { return .more }
+                size = Int(u64(prefix, p + 8))
+            }
+     if type == "moov" { return .end(p + size) }
+            if type == "mdat" || size < 8 { return .tail }
+     p += size
+        }
+ return .more
     }
 
     // MARK: - Model
@@ -232,6 +337,7 @@ enum CENCDecryptor {
 
     private static func auxJob(_ b: [UInt8], at p: Int, auxSize: Int, ivSize: Int, constIV: [UInt8],
                                sampleOffset: Int, sampleSize: Int) throws -> SampleJob {
+        guard p >= 0, p + max(auxSize, ivSize) <= b.count else { throw Failure.malformed("辅助信息越界") }
         let iv = ivSize > 0 ? Array(b[p..<p + ivSize]) : constIV
         var ranges: [(Int, Int)] = []
         if auxSize > ivSize {

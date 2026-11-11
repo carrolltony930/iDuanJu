@@ -22,6 +22,8 @@ struct ImageViewer: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            // Zoomed: drags pan the image instead of turning the page (zoom out, or double tap, to page again).
+            .scrollDisabled(zoomed)
             .offset(y: drag)
             .simultaneousGesture(zoomed ? nil : DragGesture(minimumDistance: 20)
                 .onChanged { v in if abs(v.translation.height) > abs(v.translation.width) { drag = v.translation.height } }
@@ -55,51 +57,145 @@ struct ImageViewer: View {
         .statusBarHidden()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("tg.viewer")
+        .preferredColorScheme(.dark)
         .task(id: toast) { if toast != nil { try? await Task.sleep(for: .seconds(2)); toast = nil } }
     }
 }
 
+/// One zoomable page. UIScrollView does the zooming: pinch is anchored at the fingers, zoom and pan
+/// rubber-band at their limits, panning stays inside the image, and once zoomed to an edge a further swipe
+/// goes to the enclosing pager (like Photos). Double tap zooms in on the tapped point / back to fit.
 struct ZoomableImage: View {
     let url: String
     var headers: [String: String] = [:]
     @Binding var zoomed: Bool
-    @State private var scale: CGFloat = 1
-    @State private var base: CGFloat = 1
-    @State private var offset: CGSize = .zero
-    @State private var lastOffset: CGSize = .zero
     @State private var image: UIImage?
     @State private var failed = false
+    @State private var isZoomed = false
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                if let image {
-                    Image(uiImage: image).resizable().scaledToFit()
-                        .scaleEffect(scale).offset(offset)
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .gesture(MagnifyGesture()
-                            .onChanged { v in scale = max(1, min(5, base * v.magnification)); zoomed = scale > 1.01 }
-                            .onEnded { _ in base = scale; if scale <= 1.01 { reset() } })
-                        .simultaneousGesture(scale > 1.01 ? DragGesture()
-                            .onChanged { v in offset = CGSize(width: lastOffset.width + v.translation.width, height: lastOffset.height + v.translation.height) }
-                            .onEnded { _ in lastOffset = offset } : nil)
-                        .onTapGesture(count: 2) {
-                            withAnimation(.spring(response: 0.3)) { if scale > 1.01 { reset() } else { scale = 2.5; base = 2.5; zoomed = true } }
-                        }
-                        .accessibilityIdentifier("viewer.image")
-                        .accessibilityValue(scale > 1.01 ? "zoomed" : "fit")
-                } else if failed {
-                    Image(systemName: "photo").font(.largeTitle).foregroundStyle(.white.opacity(0.4))
-                } else {
-                    ProgressView().tint(.white)
+        ZStack {
+            if let image {
+                ZoomScrollView(image: image) { z in
+                    isZoomed = z
+                    if zoomed != z { zoomed = z }
                 }
+                .accessibilityElement()
+                .accessibilityAddTraits(.isImage)
+                .accessibilityIdentifier("viewer.image")
+                .accessibilityValue(isZoomed ? "zoomed" : "fit")
+            } else if failed {
+                Image(systemName: "photo").font(.largeTitle).foregroundStyle(.white.opacity(0.4))
+            } else {
+                ProgressView().tint(.white)
             }
-            .frame(width: geo.size.width, height: geo.size.height)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: url) {
             do { image = try await CoverStore.shared.image(url: url, headers: headers) } catch { failed = true }
         }
     }
+}
 
-    private func reset() { scale = 1; base = 1; offset = .zero; lastOffset = .zero; zoomed = false }
+private struct ZoomScrollView: UIViewRepresentable {
+    let image: UIImage
+    var onZoomChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> ZoomView {
+        let v = ZoomView()
+        v.delegate = context.coordinator
+        v.onZoomChange = onZoomChange
+        v.set(image)
+        let dt = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTap(_:)))
+        dt.numberOfTapsRequired = 2
+        v.addGestureRecognizer(dt)
+        return v
+    }
+
+    func updateUIView(_ v: ZoomView, context: Context) {
+        v.onZoomChange = onZoomChange
+        if v.imageView.image !== image { v.set(image) }
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { (scrollView as? ZoomView)?.imageView }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) { (scrollView as? ZoomView)?.zoomDidChange() }
+
+        @objc func doubleTap(_ g: UITapGestureRecognizer) {
+            guard let v = g.view as? ZoomView else { return }
+            if v.zoomScale > v.minimumZoomScale + 0.01 {
+                v.setZoomScale(v.minimumZoomScale, animated: true)
+            } else {
+                // Zoom ×2.5 around the tapped point.
+                let p = g.location(in: v.imageView)
+                let s = min(v.maximumZoomScale, v.minimumZoomScale * 2.5)
+                let w = v.bounds.width / s, h = v.bounds.height / s
+                v.zoom(to: CGRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h), animated: true)
+            }
+        }
+    }
+
+    final class ZoomView: UIScrollView {
+        let imageView = UIImageView()
+        var onZoomChange: (Bool) -> Void = { _ in }
+        private var lastZoomed = false
+        private var laidOutFor: CGSize = .zero
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            showsHorizontalScrollIndicator = false
+            showsVerticalScrollIndicator = false
+            contentInsetAdjustmentBehavior = .never
+            decelerationRate = .fast
+            bouncesZoom = true
+            alwaysBounceVertical = false
+            alwaysBounceHorizontal = false
+            imageView.contentMode = .scaleAspectFit
+            addSubview(imageView)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        func set(_ image: UIImage) {
+            imageView.image = image
+            laidOutFor = .zero
+            setNeedsLayout()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard bounds.size != laidOutFor, let img = imageView.image, img.size.width > 0, bounds.width > 0 else { center(); return }
+            laidOutFor = bounds.size
+            // Image at its natural size; min zoom = aspect fit, max = 4× fit (at least 1:1 pixels).
+            zoomScale = 1
+            imageView.frame = CGRect(origin: .zero, size: img.size)
+            contentSize = img.size
+            let fit = min(bounds.width / img.size.width, bounds.height / img.size.height)
+            minimumZoomScale = fit
+            maximumZoomScale = max(fit * 4, 1)
+            zoomScale = fit
+            center()
+        }
+
+        /// Keep the image centred while it is smaller than the viewport.
+        private func center() {
+            let s = imageView.frame.size
+            contentInset = UIEdgeInsets(top: max(0, (bounds.height - s.height) / 2), left: max(0, (bounds.width - s.width) / 2),
+                                    bottom: 0, right: 0)
+        }
+
+        func zoomDidChange() {
+            center()
+            let z = zoomScale > minimumZoomScale + 0.01
+            if z != lastZoomed { lastZoomed = z; onZoomChange(z) }
+        }
+
+        /// Paging away / dismissing: come back at fit.
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil, zoomScale != minimumZoomScale { setZoomScale(minimumZoomScale, animated: false) }
+        }
+    }
 }

@@ -69,7 +69,7 @@ struct GlassTabBar: View {
                     .foregroundStyle(on ? STVTheme.text : STVTheme.secondary)
                     .frame(maxWidth: .infinity).frame(height: 48)
                     .background {
-                        if on { Capsule().fill(.white.opacity(0.14)).matchedGeometryEffect(id: "pill", in: ns) }
+                        if on { Capsule().fill(STVTheme.text.opacity(0.1)).matchedGeometryEffect(id: "pill", in: ns) }
                     }
                     .contentShape(Capsule())
                 }
@@ -84,10 +84,10 @@ struct GlassTabBar: View {
         .background(.ultraThinMaterial, in: Capsule())
         .background(STVTheme.surface.opacity(0.55), in: Capsule())
         .overlay {
-            Capsule().strokeBorder(LinearGradient(colors: [.white.opacity(0.24), .white.opacity(0.06)],
+            Capsule().strokeBorder(LinearGradient(colors: [STVTheme.text.opacity(0.18), STVTheme.text.opacity(0.05)],
                                                   startPoint: .top, endPoint: .bottom), lineWidth: 0.8)
         }
-        .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
         .padding(.horizontal, 16)
         .padding(.bottom, 4)
     }

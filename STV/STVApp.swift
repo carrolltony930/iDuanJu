@@ -45,7 +45,6 @@ struct STVApp: App {
                     RootTabView()
                 }
             }
-            .preferredColorScheme(.dark)
             .tint(STVTheme.accent)
             .task {
                 await CFCookies.restoreFromWebKit()

@@ -151,7 +151,10 @@ struct HGStreamAudio: Hashable {
     var codec: String?; var profile: String?; var language: String?; var channels: Int?; var sampleRate: Int?; var bitrate: Int?
 }
 
-enum MediaKind: String, Hashable { case mp4Cenc = "MP4 (CENC AES-CTR)", mp4Clear = "MP4", hls = "HLS", hlsAES = "HLS (AES-128)" }
+enum MediaKind: String, Hashable {
+    case mp4Cenc = "MP4 (CENC AES-CTR)", mp4Clear = "MP4", hls = "HLS", hlsAES = "HLS (AES-128)"
+    var isProgressiveMP4: Bool { self == .mp4Clear || self == .mp4Cenc }
+}
 
 struct HGStream: Hashable, Identifiable {
     var streamId: String?

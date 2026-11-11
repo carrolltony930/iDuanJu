@@ -35,7 +35,7 @@ struct ChannelFeedView: View {
                 ForEach(entries) { e in
                     TGPostCard(post: e.post, channel: store.channel(e.post.channel), verdict: e.verdict, actions: actions)
                         .padding(.horizontal, e.verdict.blocked ? 16 : 0).padding(.vertical, e.verdict.blocked ? 4 : 0)
-                    Divider().overlay(Color.white.opacity(0.06)).padding(.leading, 66)
+                    Divider().overlay(STVTheme.text.opacity(0.06)).padding(.leading, 66)
                 }
                 if !entries.isEmpty && store.hasMore(only) {
                     ProgressView().tint(STVTheme.secondary).frame(maxWidth: .infinity).padding(20)
@@ -144,7 +144,7 @@ struct ChannelFeedView: View {
                 Spacer(minLength: 0)
             }
             .padding(12)
-            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+            .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 12))
             .padding(.horizontal, 16).padding(.bottom, 8)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("tg.error.\(c.id)")

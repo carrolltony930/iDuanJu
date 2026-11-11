@@ -90,7 +90,11 @@ struct DramaDetailView: View {
         ZStack(alignment: .bottom) {
             CoverView(url: DetailCover.pick(detail: detail?.cover ?? "", list: series.cover), corner: 0, fallback: series.cover, a11yID: "detail.poster")
                 .frame(height: 440)
-                .overlay(LinearGradient(colors: [.black.opacity(0.25), .clear, STVTheme.bg], startPoint: .top, endPoint: .bottom))
+                // White title / meta sit on the poster in both schemes: a dark scrim under them, then a short fade
+                // into the page background so the hero blends into the light or dark page below.
+                .overlay(LinearGradient(stops: [.init(color: .black.opacity(0.25), location: 0), .init(color: .clear, location: 0.3),
+                           .init(color: .black.opacity(0.62), location: 0.9), .init(color: STVTheme.bg, location: 1)],
+                          startPoint: .top, endPoint: .bottom))
             VStack(spacing: 8) {
                 Text(detail?.title ?? series.title).font(.largeTitle.weight(.bold)).foregroundStyle(.white).multilineTextAlignment(.center).lineLimit(2)
                     .contextMenu {
@@ -102,7 +106,7 @@ struct DramaDetailView: View {
                       detail?.author].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.subheadline).foregroundStyle(.white.opacity(0.75))
                 if let d = detail, d.rating > 0 || !d.hotText.isEmpty { SocialStats(detail: d) }
-            }.padding(.horizontal, 20).padding(.bottom, 10)
+            }.padding(.horizontal, 20).padding(.bottom, 44)
         }
     }
 
@@ -121,8 +125,8 @@ struct DramaDetailView: View {
             Button { withAnimation(.spring) { library.toggleFavorite(series) } } label: {
                 Image(systemName: library.isFavorite(series) ? "heart.fill" : "heart")
                     .font(.title3).frame(width: 50, height: 50)
-                    .foregroundStyle(library.isFavorite(series) ? STVTheme.accent : .white)
-                    .background(Color.white.opacity(0.1), in: Circle())
+                    .foregroundStyle(library.isFavorite(series) ? STVTheme.accent : STVTheme.text)
+                    .background(STVTheme.elevated, in: Circle())
                     .contentTransition(.symbolEffect(.replace))
             }
         }.padding(.horizontal, 20)
@@ -173,7 +177,7 @@ struct DramaDetailView: View {
                                 .font(.subheadline.weight(on ? .semibold : .regular))
                                 .foregroundStyle(on ? STVTheme.text : STVTheme.secondary)
                                 .padding(.horizontal, 14).padding(.vertical, 7)
-                                .background(on ? Color.white.opacity(0.16) : Color.white.opacity(0.06), in: Capsule())
+                                .background(on ? STVTheme.text.opacity(0.14) : STVTheme.text.opacity(0.06), in: Capsule())
                         }.buttonStyle(.plain)
                     }
                 }.padding(.horizontal, 16)
@@ -291,9 +295,10 @@ struct DramaDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             CoverView(url: s.cover, corner: 10)
                 .frame(width: 104, height: 139)
+                .zoomSource(s.id, ns)
                 .overlay {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(current ? STVTheme.accent : Color.white.opacity(0.12), lineWidth: current ? 2.5 : 0.8)
+                        .strokeBorder(current ? STVTheme.accent : STVTheme.text.opacity(0.12), lineWidth: current ? 2.5 : 0.8)
                 }
                 .overlay(alignment: .topLeading) {
                     if current || label != nil {
@@ -334,9 +339,17 @@ struct DramaDetailView: View {
 
     private func load() async {
         do {
-            detail = try await Catalog.detail(series)
+            let d = try await Catalog.detail(series)
+            detail = d
             error = nil
             selectResumeGroup()
+            if series.source == .hongguo {
+                // Warm the play URL of the episode a tap would open (resume point, else episode 1).
+                let i = library.progress(for: series)?.episodeIndex ?? 0
+                if d.episodes.indices.contains(i) { HongguoClient.shared.prefetch(vids: [d.episodes[i].vid]) }
+                // Second pass: cast / tags / rating from the official site.
+                if let e = await Catalog.enriched(series, d), detail?.seriesId == e.seriesId { detail = e }
+            }
         } catch { self.error = error }
     }
 }
