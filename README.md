@@ -4,8 +4,11 @@
 > 本项目以 **GPL-3.0** 协议发布：任何使用、修改、衍生本项目代码的作品，都必须同样以 GPL-3.0 开源并公开完整源代码。
 > 如果你是花钱买到本 App 或本代码的，你被骗了，请举报卖家。
 
-i短剧 是一个原生 SwiftUI 编写的 iOS 多源短剧 / 视频 / 漫画 / Telegram 频道聚合播放器。App 本身**不托管任何内容**，
-所有数据都由你的设备直接向各个公开站点请求。
+i短剧 是一个原生 SwiftUI 编写的 iOS 多源短剧 / 视频 / 漫画 / Telegram 频道聚合播放器，另有原生 Kotlin 编写的
+[Android 版](#android-版)。App 本身**不托管任何内容**，所有数据都由你的设备直接向各个公开站点请求。
+
+**下载**：到 [Releases](https://github.com/my-name-is-alan/iDuanJu/releases) 获取 iOS 未签名 IPA 和 Android APK
+（[Android 1.5.2](https://github.com/my-name-is-alan/iDuanJu/releases/tag/v1.5.2-android)）。
 
 ## 功能
 
@@ -80,6 +83,35 @@ scripts/package.sh            # 输出到 ./dist/STV-<版本>-unsigned.ipa
 
 未签名 IPA 用 AltStore / Sideloadly / TrollStore 等工具用你自己的 Apple ID 重签后安装。
 
+## Android 版
+
+位于 [`android/`](android/)：原生 **Kotlin + Jetpack Compose + Media3（ExoPlayer）**，插件运行时为 QuickJS，
+目标与 iOS 功能对齐。**minSdk 26（Android 8.0）/ targetSdk 35**。当前版本 **1.5.2**（预发布）。
+
+```bash
+# 要求 JDK 21 + Android SDK（platform 35）
+cd android
+./gradlew assembleRelease   # 输出 app/build/outputs/apk/release/app-release.apk
+./gradlew :core:test        # 离线单元测试
+```
+
+Releases 里的 APK 用 Android 调试证书签名（未上架任何商店），首次安装需允许「安装未知来源应用」；
+以后换成正式签名的版本需要先卸载再装。
+
+已对齐 iOS：
+
+- 红果：榜单 / 详情（题材、演员、关联季）/ 取流 / CENC 解密 / 播放；弹幕；选集面板（季、区间、更新至）
+- 播放器：手势、倍速、画质、技术标签、季标、按设备解码能力选流；HLS 去广告（默认开启，可关）
+- 苹果 CMS v10 采集站；idj1 JS 插件（视频 + 漫画、`idjimg://` 图片、域名白名单、订阅列表、内置推荐插件）
+- Telegram 公开频道（t.me 网页预览）+ 屏蔽规则（关键词 / 正则 / 域名、广告识别、隐藏或折叠）
+- 黄果、漫画（MangaDex、包子、插件）；首页频道栏与「频道」面板、多源搜索、继续观看 / 收藏 / 历史
+- 「我的」：成人片源开关（18+ 确认，默认关闭）、去广告、重置设备 / 会话、清缓存
+
+尚未移植：TDLib 登录与下载管理、漫画离线下载、插件执行超时中断与签名校验、长视频预缓冲设置、Face ID 片源锁。
+
+**红果取流**：上游会软拒绝从未注册过的本地设备（HTTP 200 空包）。Android 默认每次取流现注册一台一次性匿名设备，
+只用一次，仓库内不附带、不写死任何设备 ID；也可以在「我的」里填入你自己的设备覆盖。
+
 ## Telegram（TDLib）登录
 
 公开频道走 t.me 网页预览，不需要登录。私有 / 受限频道、频道内搜索需要 TDLib 登录：
@@ -120,6 +152,10 @@ sandboxed QuickJS plugin system (per-plugin domain allow-list, isolated cookies/
 - Build: `xcodegen generate`, then build the `STV` scheme in Xcode (iOS 18.0+).
 - Player core: AetherEngine 7.62.0 (LGPL-3.0 with App Store exception, unmodified) with FFmpeg (LGPL-2.1) shipped as replaceable
   dynamic frameworks; automatic AVPlayer fallback; speed capped at 2× by the engine; optional HLS ad-strip (on by default). Sideload the unsigned IPA from `scripts/package.sh`.
+- **Android** (`android/`): native Kotlin + Jetpack Compose + Media3, minSdk 26 / targetSdk 35. Build with JDK 21:
+  `cd android && ./gradlew assembleRelease`. Prebuilt (debug-cert signed) APK on the
+  [Releases](https://github.com/my-name-is-alan/iDuanJu/releases) page. Not yet ported: TDLib login/downloads, manga offline
+  download, plugin timeout/signature checks, long-video precache, Face ID lock.
 - Telegram login uses **your own** `api_id` / `api_hash` from my.telegram.org; none are bundled.
 - Adult (18+) sources are off by default and require explicit unlock.
 - For personal study only; respect each site's Terms of Service and your local laws.
