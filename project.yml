@@ -2,7 +2,7 @@ name: STV
 options:
   bundleIdPrefix: com.local
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "17.0"
   createIntermediateGroups: true
 settings:
   SWIFT_VERSION: "5.0"
@@ -14,8 +14,8 @@ packages:
   QuickJS:
     path: Packages/QuickJS
   AetherEngine:
-    url: https://github.com/superuser404notfound/AetherEngine
-    from: 7.62.0
+    url: https://github.com/carrolltony930/AetherEngine
+    branch: main
 targets:
   STV:
     type: application
