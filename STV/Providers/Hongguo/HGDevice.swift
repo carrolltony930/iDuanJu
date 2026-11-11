@@ -7,6 +7,16 @@ struct HGDevice: Codable {
     var cdid: String
     var openudid: String
     var sessionEntropy: String
+    /// Unix seconds of the device_register call. nil = file written by an older build (age unknown → treated as stale).
+    var registeredAt: Double?
+
+    /// video_model soft-rejects (HTTP 200 + 0 bytes) a registered device roughly 9–10 min after device_register
+    /// (live probe 2026-11-11: P for 11 requests up to t=509 s, F from t=629 s on, with or without traffic in between).
+    static let playbackMaxAge: TimeInterval = 7 * 60
+    var isStaleForPlayback: Bool {
+        guard let t = registeredAt else { return true }
+        return Date().timeIntervalSince1970 - t > Self.playbackMaxAge
+    }
 
     var entropy: [UInt8] { Bytes.fromHex(sessionEntropy) ?? [UInt8](repeating: 0, count: 20) }
 
@@ -35,7 +45,7 @@ struct HGDevice: Codable {
 
     static func register(session: URLSession) async throws -> HGDevice {
         var dev = HGDevice(deviceId: randomDigits(19), iid: randomDigits(19), cdid: uuid4(),
-                           openudid: Bytes.hex(Bytes.random(8)), sessionEntropy: Bytes.hex(Bytes.random(20)))
+                           openudid: Bytes.hex(Bytes.random(8)), sessionEntropy: Bytes.hex(Bytes.random(20)), registeredAt: nil)
         let query = "aid=8662&app_name=novelread&version_code=\(versionCode)&version_name=\(appVersion)" +
             "&device_platform=android&os=android&ssmix=a&language=zh&channel=ry_hongguo_offlinestore_04" +
             "&device_type=sdk_gphone64_arm64&device_brand=google&resolution=1080*2400&dpi=420&host_abi=arm64-v8a" +
@@ -68,6 +78,7 @@ struct HGDevice: Codable {
             throw ProviderError.upstream("device_register 返回无效设备 ID")
         }
         dev.deviceId = did; dev.iid = iid
+        dev.registeredAt = Date().timeIntervalSince1970
         dev.save()
         return dev
     }

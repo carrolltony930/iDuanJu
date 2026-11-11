@@ -109,15 +109,75 @@ class HongguoClient(
 
     private class PlayerEmptyBody : Exception("HTTP 200 empty (soft reject)")
 
+    private val deviceLock = Any()
+
+    /** Serialized: the player and next-episode prefetch run on different threads and must not register twice. */
     fun ensureDevice(): HGDevice {
         device?.let { return it }
-        HGDevice.load(dataDir)?.let { device = it; return it }
-        val d = HGDevice.register(http, dataDir)
-        device = d
-        return d
+        synchronized(deviceLock) {
+            device?.let { return it }
+            HGDevice.load(dataDir)?.let { device = it; return it }
+            // device_register occasionally answers device_id 0 (seen right after a burst); one short retry.
+            val d = try { HGDevice.register(http, dataDir) } catch (e: Exception) {
+                Thread.sleep(2000); HGDevice.register(http, dataDir)
+            }
+            device = d
+            return d
+        }
     }
 
-    fun resetDevice() { device = null; HGDevice.reset(dataDir) }
+    fun resetDevice() { synchronized(deviceLock) { device = null; HGDevice.reset(dataDir) } }
+
+    @Volatile private var lastAutoReregisterMs = 0L
+    private val autoReregisterMinIntervalMs = 30_000L
+
+    private fun hasPureOverride(): Boolean =
+        HGPlayerDevice.overrideProvider?.invoke()?.let { it.first.isNotEmpty() && it.second.isNotEmpty() } == true
+
+    /**
+     * Proactive renewal before video_model: a registered device only plays for ~10 min after device_register, so a
+     * device restored on a cold start (or kept across a long session) is already dead. Same as tapping 「重置」.
+     */
+    private fun refreshDeviceIfStaleForPlayback() {
+        if (hasPureOverride()) return
+        val old: HGDevice
+        synchronized(deviceLock) {
+            old = (device ?: HGDevice.load(dataDir)) ?: return
+            if (!old.isStaleForPlayback) return
+            val now = System.currentTimeMillis()
+            if (now - lastAutoReregisterMs < autoReregisterMinIntervalMs) return
+            lastAutoReregisterMs = now
+            device = null; HGDevice.reset(dataDir)
+        }
+        runCatching { ensureDevice() }.onSuccess {
+            System.err.println("[HG] device …${old.deviceId.takeLast(4)} stale -> re-registered …${it.deviceId.takeLast(4)}")
+        }
+    }
+
+    /**
+     * Automatic 「重置红果设备注册」: video_model soft-rejects (HTTP 200 + 0 bytes) a registered device after it has
+     * been used for a while, and nothing renewed it, so every later play came back empty until a manual reset.
+     * Drops the device only if it is still the one that failed (prefetch may already have replaced it); throttled.
+     * Returns true when a different, usable device is now in place.
+     */
+    private fun reregisterAfterSoftReject(failedDid: String): Boolean {
+        if (hasPureOverride()) return false                    // user-pinned device: never replace it
+        synchronized(deviceLock) {
+            val cur = device ?: HGDevice.load(dataDir)
+            if (cur != null && cur.deviceId != failedDid) return true
+            val now = System.currentTimeMillis()
+            if (now - lastAutoReregisterMs < autoReregisterMinIntervalMs) return false
+            lastAutoReregisterMs = now
+            device = null; HGDevice.reset(dataDir)
+        }
+        return try {
+            val d = ensureDevice()
+            System.err.println("[HG] soft reject on device …${failedDid.takeLast(4)} -> re-registered …${d.deviceId.takeLast(4)}")
+            d.deviceId != failedDid
+        } catch (e: Exception) {
+            System.err.println("[HG] auto re-register failed: $e"); false
+        }
+    }
 
     private fun playerQuery(rt: Long): String =
         HGPlayerDevice.queryPart() +
@@ -468,20 +528,18 @@ class HongguoClient(
 
     fun resolveFresh(vid: String): HGResolvedVideo {
         var soft = false
-        val hasOverride = HGPlayerDevice.overrideProvider?.invoke()?.let { it.first.isNotEmpty() && it.second.isNotEmpty() } == true
+        val hasOverride = hasPureOverride()
         // iOS 45d3971: make sure a device_register device exists before video_model (purePlayerIds prefers it).
+        refreshDeviceIfStaleForPlayback()
         runCatching { ensureDevice() }
-        for (level in listOf(3, 4)) {
-            try {
-                val r = resolvePure(vid, level)
-                if (r.err == BYTEVC2 && level == 3) continue
-                lastPureRoute = if (hasOverride) "override" else if (device != null) "registered" else "mint"
-                return r
-            } catch (_: PlayerEmptyBody) {
-                soft = true; System.err.println("[HG] resolvePure empty level=$level")
-            } catch (e: Exception) {
-                System.err.println("[HG] resolvePure error level=$level: $e")
-            }
+        val pureDid = purePlayerIds().first
+        val (first, firstSoft) = resolvePureLevels(vid, hasOverride)
+        first?.let { return it }
+        soft = firstSoft
+        // Soft reject on the registered device = it went stale upstream. Re-register once and retry instead of
+        // falling through to the legacy dialects (minted devices, soft-rejected anyway).
+        if (soft && reregisterAfterSoftReject(pureDid)) {
+            resolvePureLevels(vid, hasOverride).first?.let { return it }
         }
         for (level in listOf(3, 4)) {
             try {
@@ -507,6 +565,23 @@ class HongguoClient(
         }
         if (soft) throw ProviderException.upstream("取流被上游空包拒绝（软拒绝）")
         throw ProviderException.upstream("取链失败")
+    }
+
+    /** Pure video_model level 3 then 4; an empty body means the device is rejected, so stop there. (result, softRejected) */
+    private fun resolvePureLevels(vid: String, hasOverride: Boolean): Pair<HGResolvedVideo?, Boolean> {
+        for (level in listOf(3, 4)) {
+            try {
+                val r = resolvePure(vid, level)
+                if (r.err == BYTEVC2 && level == 3) continue
+                lastPureRoute = if (hasOverride) "override" else if (device != null) "registered" else "mint"
+                return r to false
+            } catch (_: PlayerEmptyBody) {
+                System.err.println("[HG] resolvePure empty level=$level"); return null to true
+            } catch (e: Exception) {
+                System.err.println("[HG] resolvePure error level=$level: $e")
+            }
+        }
+        return null to false
     }
 
     /** Pure player device: override via HGPlayerDevice.overrideProvider, else local mint (public hygiene). */
@@ -617,7 +692,7 @@ class HongguoClient(
                     System.err.println("[HG] resolvePure ok level=$level streams=${r.streams.size} did=$did")
                     return r
                 }
-            } catch (e: PlayerEmptyBody) { last = e }
+            } catch (e: PlayerEmptyBody) { throw e }   // device rejected: retrying the same device only burns a request
             catch (e: Exception) { last = e }
         }
         throw last

@@ -100,7 +100,13 @@ actor HongguoClient {
         if let d = HGDevice.load() { device = d; return d }
         if let t = registering { return try await t.value }
         let s = session
-        let t = Task { try await HGDevice.register(session: s) }
+        // device_register occasionally answers device_id 0 (seen right after a burst); one short retry.
+        let t = Task {
+            do { return try await HGDevice.register(session: s) } catch {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                return try await HGDevice.register(session: s)
+            }
+        }
         registering = t
         defer { registering = nil }
         let d = try await t.value
@@ -109,6 +115,50 @@ actor HongguoClient {
     }
 
     func resetDevice() { device = nil; HGDevice.reset() }
+
+    /// Last automatic re-registration (soft-reject recovery). Throttle so a blocked network can't hammer device_register.
+    private var lastAutoReregister: Date?
+    private static let autoReregisterMinInterval: TimeInterval = 30
+
+    private static var hasPurePlayerOverride: Bool {
+        guard let s = UserDefaults.standard.string(forKey: "stv.hg.purePlayerDevice") else { return false }
+        let p = s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        return p.count == 2 && !p[0].isEmpty && !p[1].isEmpty
+    }
+
+    /// Proactive renewal before video_model: a registered device only plays for ~10 min after device_register, so a
+    /// device restored on a cold start (or kept across a long session) is already dead. Same as tapping 「重置」.
+    private func refreshDeviceIfStaleForPlayback() async {
+        if Self.hasPurePlayerOverride { return }
+        guard let d = device ?? HGDevice.load(), d.isStaleForPlayback else { return }
+        if let t = lastAutoReregister, Date().timeIntervalSince(t) < Self.autoReregisterMinInterval { return }
+        lastAutoReregister = Date()
+        resetDevice()
+        if let n = try? await ensureDevice() {
+            NSLog("[HG] device …%@ older than %.0fs -> re-registered …%@", String(d.deviceId.suffix(4)),
+                  HGDevice.playbackMaxAge, String(n.deviceId.suffix(4)))
+        }
+    }
+
+    /// Automatic 「重置红果设备注册」: video_model soft-rejects (HTTP 200 + 0 bytes) a registered device after it has
+    /// been used for a while, and nothing ever renewed it, so every later play came back empty until the user reset by hand.
+    /// Drops the device only if it is still the one that failed (a concurrent prefetch may already have replaced it).
+    /// Returns true when a different, usable device is now in place.
+    private func reregisterAfterSoftReject(failedDeviceId did: String) async -> Bool {
+        if Self.hasPurePlayerOverride { return false }          // user-pinned device: never replace it
+        if let cur = device ?? HGDevice.load(), cur.deviceId != did { return true }
+        if let t = lastAutoReregister, Date().timeIntervalSince(t) < Self.autoReregisterMinInterval { return false }
+        lastAutoReregister = Date()
+        resetDevice()
+        do {
+            let d = try await ensureDevice()
+            NSLog("[HG] soft reject on device …%@ -> re-registered …%@", String(did.suffix(4)), String(d.deviceId.suffix(4)))
+            return d.deviceId != did
+        } catch {
+            NSLog("[HG] auto re-register failed: %@", String(describing: error))
+            return false
+        }
+    }
 
     // MARK: transport
 
@@ -520,20 +570,15 @@ actor HongguoClient {
 
     func resolveFresh(vid: String) async throws -> HGResolvedVideo {
         var sawSoftReject = false
+        await refreshDeviceIfStaleForPlayback()
         _ = try? await ensureDevice()   // make sure a device_register device exists before video_model
         // Full Argus 551 / Ladon on single video_model first; legacy batch remains a fallback.
-        for level in [3, 4] {
-            try Task.checkCancellation()
-            do {
-                let r = try await resolvePure(vid, level: level)
-                if r.err == Self.byteVC2Only && level == 3 { continue }
-                return r
-            } catch is PlayerEmptyBody {
-                sawSoftReject = true
-                NSLog("[HG] resolvePure empty level=%d", level)
-            } catch {
-                NSLog("[HG] resolvePure error level=%d: %@", level, String(describing: error))
-            }
+        let pureDid = Self.purePlayerDeviceID
+        if let r = try await resolvePureLevels(vid, sawSoftReject: &sawSoftReject) { return r }
+        // Soft reject on the registered device = that device has gone stale upstream. Re-register once and retry,
+        // instead of falling through to the legacy dialects (they use minted devices and are soft-rejected anyway).
+        if sawSoftReject, await reregisterAfterSoftReject(failedDeviceId: pureDid) {
+            if let r = try await resolvePureLevels(vid, sawSoftReject: &sawSoftReject) { return r }
         }
         for level in [3, 4] {
             try Task.checkCancellation()
@@ -567,6 +612,26 @@ actor HongguoClient {
             throw ProviderError.upstream("取流被上游空包拒绝（软拒绝）")
         }
         throw ProviderError.upstream("取链失败")
+    }
+
+    /// Pure video_model at level 3 then 4. An empty body at level 3 means the device is rejected, so level 4 is
+    /// skipped (it would only spend another request on a dead device).
+    private func resolvePureLevels(_ vid: String, sawSoftReject: inout Bool) async throws -> HGResolvedVideo? {
+        for level in [3, 4] {
+            try Task.checkCancellation()
+            do {
+                let r = try await resolvePure(vid, level: level)
+                if r.err == Self.byteVC2Only && level == 3 { continue }
+                return r
+            } catch is PlayerEmptyBody {
+                sawSoftReject = true
+                NSLog("[HG] resolvePure empty level=%d", level)
+                return nil
+            } catch {
+                NSLog("[HG] resolvePure error level=%d: %@", level, String(describing: error))
+            }
+        }
+        return nil
     }
 
     // MARK: pure player (gateway player_pure.go, 7.3.9.32 profile)

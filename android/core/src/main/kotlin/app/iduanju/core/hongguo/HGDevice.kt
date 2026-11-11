@@ -19,7 +19,13 @@ data class HGDevice(
     var cdid: String,
     var openudid: String,
     var sessionEntropy: String,
+    /** Unix ms of device_register; 0 = file from an older build (age unknown → stale). */
+    var registeredAt: Long = 0L,
 ) {
+    /** video_model soft-rejects a registered device ~9–10 min after device_register (probe 2026-11-11). */
+    val isStaleForPlayback: Boolean
+        get() = registeredAt <= 0L || System.currentTimeMillis() - registeredAt > PLAYBACK_MAX_AGE_MS
+
     val entropy: ByteArray get() = Bytes.fromHex(sessionEntropy) ?: ByteArray(20)
 
     fun save(dir: File) {
@@ -27,12 +33,13 @@ data class HGDevice(
         File(dir, "hongguo_device.json").writeText(
             JSONObject(mapOf(
                 "deviceId" to deviceId, "iid" to iid, "cdid" to cdid,
-                "openudid" to openudid, "sessionEntropy" to sessionEntropy,
+                "openudid" to openudid, "sessionEntropy" to sessionEntropy, "registeredAt" to registeredAt,
             )).toString()
         )
     }
 
     companion object {
+        const val PLAYBACK_MAX_AGE_MS = 7 * 60 * 1000L
         const val appVersion = "7.3.3.32"
         const val versionCode = "73332"
         const val ua =
@@ -45,7 +52,7 @@ data class HGDevice(
                 val j = JSONObject(f.readText())
                 val d = HGDevice(
                     j.optString("deviceId"), j.optString("iid"), j.optString("cdid"),
-                    j.optString("openudid"), j.optString("sessionEntropy"),
+                    j.optString("openudid"), j.optString("sessionEntropy"), j.optLong("registeredAt", 0L),
                 )
                 if (d.deviceId.isEmpty() || d.iid.isEmpty() || d.cdid.isEmpty()) null else d
             } catch (_: Exception) { null }
@@ -96,7 +103,7 @@ data class HGDevice(
             if (did.isEmpty() || did == "0" || iid.isEmpty() || iid == "0") {
                 throw ProviderException.upstream("device_register 返回无效设备 ID")
             }
-            dev = dev.copy(deviceId = did, iid = iid)
+            dev = dev.copy(deviceId = did, iid = iid, registeredAt = System.currentTimeMillis())
             dev.save(dir)
             return dev
         }
