@@ -280,10 +280,6 @@ struct SpeedPopover: View {
             ForEach((landscape ? Array(Self.portraitSteps.prefix(6)) : Self.portraitSteps).filter { $0 <= maxRate + 0.001 }, id: \.self) { r in
                 PlayerPopoverRow(title: Self.label(r), selected: abs(r - current) < 0.01, id: "player.rate.\(r)", rowHeight: landscape ? 37 : 44) { onPick(r) }
             }
-            if !landscape {
-                Text("长按画面可临时 2× 加速").font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
-                    .padding(.horizontal, 12).padding(.top, 4)
-            }
         }
         .padding(7)
     }

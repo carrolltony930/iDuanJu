@@ -46,7 +46,7 @@ import UIKit
         let gen = generation
         statusObservation = nil
         guard let item = PlaybackCoordinator.makeItem(src) else { throw URLError(.badURL) }
-        // No nowPlayingInfo on the item: keeps the Dynamic Island free of a playback badge.
+        item.nowPlayingInfo = [MPMediaItemPropertyTitle: title]
         audioGroup = nil; legibleGroup = nil; audioTracks = []; subtitleTracks = []; selectedAudio = nil; selectedSubtitle = nil
         player.replaceCurrentItem(with: item)
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in

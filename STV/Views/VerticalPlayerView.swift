@@ -45,10 +45,6 @@ struct PlayerScreen: View {
     @State private var danmakuSheet = false
     @State private var speedMode = false
     @State private var previewRate: Double = 1.0
-    @State private var pendingLock = false
-    @State private var pendingCancel = false
-    @State private var speedBaseIndex = 0
-    @State private var lastStepOffset = 0
     /// Portrait feed content offset (pt): the shared video layer rides along with the page being swiped.
     @State private var feedScrollY: CGFloat = 0
     /// Running double-tap seek (+10/+20/… s) and which side it is on; drives the side bubble.
@@ -209,8 +205,7 @@ struct PlayerScreen: View {
                     }
                     // Native iOS volume HUD is used instead (see PlayerAdjust.swift).
                     if speedMode {
-                        PlayerSpeedHUD(rate: previewRate, pendingLock: pendingLock, pendingCancel: pendingCancel,
-                                       hasLockedRate: co.lockedRate != nil)
+                        PlayerSpeedHUD(rate: previewRate)
                             .position(x: full.width / 2, y: full.height / 2).allowsHitTesting(false)
                     }
                 }
@@ -801,74 +796,26 @@ struct PlayerScreen: View {
     // MARK: Speed gesture
     // Priority: edge-back (nav) > vertical page swipe > long-press speed > tap.
     // Implemented in PlayerTouchCatcher (UIKit) so ScrollView paging / interactive pop are not stolen.
-    // Speed drag only runs after long-press succeeds; scrollDisabled(speedMode) then locks paging.
+    // 长按期间倍速固定 2.0x，前后滑动一律不改变倍速；scrollDisabled(speedMode) 只用于锁住翻页。
 
     private let edgeBackWidth: CGFloat = 36
 
     private func enterSpeedMode() {
-        // 长按即进入 2.0x（受内核上限约束），不再从当前 1.0x 起步。
+        // 长按固定 2.0x（受内核上限约束），前后/上下滑动都不再改变倍速。
         let quick = min(2.0, co.engine.maxRate)
         previewRate = quick
-        speedBaseIndex = PlaybackCoordinator.stepIndex(of: quick)
-        lastStepOffset = 0
-        pendingLock = false
-        pendingCancel = false
         speedMode = true
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if co.paused { co.togglePause() }
-        co.applyRate(previewRate)
+        co.applyRate(quick)
     }
 
-    private func handleSpeedTranslation(_ translation: CGSize) {
-        let dx = translation.width
-        let dy = translation.height
-        let absX = abs(dx)
-        let absY = abs(dy)
-        if absY > 56, absY > absX * 1.15 {
-            if dy < -56 {
-                pendingLock = true
-                pendingCancel = false
-            } else if dy > 56 {
-                pendingCancel = true
-                pendingLock = false
-            }
-        } else if absX > 28 {
-            pendingLock = false
-            pendingCancel = false
-            let stepPts: CGFloat = 44
-            let offset = Int((dx / stepPts).rounded(.towardZero))
-            if offset != lastStepOffset {
-                lastStepOffset = offset
-                let top = PlaybackCoordinator.rateSteps.lastIndex { $0 <= co.engine.maxRate + 0.001 } ?? PlaybackCoordinator.rateSteps.count - 1
-                // 只往前滑升档（2.5x / 3.0x）；往后滑不降到 2.0x 以下。
-                let idx = max(speedBaseIndex, min(top, speedBaseIndex + max(0, offset)))
-                let next = PlaybackCoordinator.rateSteps[idx]
-                if next != previewRate {
-                    previewRate = next
-                    co.applyRate(next)
-                    UISelectionFeedbackGenerator().selectionChanged()
-                }
-            }
-        }
-    }
+    /// 倍速滑动功能已移除：长按期间无论怎么划都保持 2.0x。
+    private func handleSpeedTranslation(_ translation: CGSize) {}
 
     private func endSpeedMode() {
-        defer {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                speedMode = false
-                pendingLock = false
-                pendingCancel = false
-            }
-        }
-        if pendingCancel {
-            co.unlockRate()
-            UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            return
-        }
-        if pendingLock {
-            co.lockRate(previewRate)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            return
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            speedMode = false
         }
         co.restoreLockedOrNormal()
     }

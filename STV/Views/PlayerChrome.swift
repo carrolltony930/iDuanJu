@@ -246,44 +246,18 @@ struct PlayerPill: View {
     }
 }
 
-/// On-screen speed-control HUD while long-pressing.
+/// 长按倍速提示：固定 2.0x，不再有任何调速/加速/减慢文案。
 struct PlayerSpeedHUD: View {
     var rate: Double
-    var pendingLock: Bool
-    var pendingCancel: Bool
-    var hasLockedRate: Bool
-
-    private var hint: String {
-        if pendingCancel { return "松开取消锁定 · 恢复 1x" }
-        if pendingLock { return "松开后锁定此倍速" }
-        if hasLockedRate { return "← → 调速 · ↑ 改锁定 · ↓ 取消锁定" }
-        return "← → 调速 · ↑ 锁定 · ↓ 取消"
-    }
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: pendingCancel ? "xmark.circle.fill"
-                      : (pendingLock || hasLockedRate ? "lock.fill" : "gauge.with.dots.needle.67percent"))
-                    .font(.system(size: 18, weight: .semibold))
-                Text(PlaybackCoordinator.formatRate(rate))
-                    .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
-            }
-            .foregroundStyle(pendingCancel ? Color.orange : (pendingLock ? STVTheme.accent : .white))
-
-            Text(hint)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.white.opacity(0.72))
-                .multilineTextAlignment(.center)
-
-            HStack(spacing: 14) {
-                Label("减慢", systemImage: "chevron.left")
-                Label("加快", systemImage: "chevron.right")
-            }
-            .font(.caption2)
-            .foregroundStyle(.white.opacity(0.45))
-            .labelStyle(.titleAndIcon)
+        HStack(spacing: 8) {
+            Image(systemName: "gauge.with.dots.needle.67percent")
+                .font(.system(size: 18, weight: .semibold))
+            Text(PlaybackCoordinator.formatRate(rate))
+                .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
         }
+        .foregroundStyle(.white)
         .padding(.horizontal, 22)
         .padding(.vertical, 16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -322,8 +296,7 @@ struct PlayerChromeShotHost: View {
                     .overlay(alignment: .leading) { Capsule().fill(STVTheme.accent).frame(width: 140, height: 3) }.padding(.vertical)
             }.padding(.horizontal, 20)
             if phase != .rightMenu {
-                PlayerSpeedHUD(rate: phase == .locked ? 2 : 1.5, pendingLock: phase == .locked,
-                               pendingCancel: false, hasLockedRate: phase == .locked)
+                PlayerSpeedHUD(rate: phase == .locked ? 2 : 1.5)
             }
         }
         .preferredColorScheme(.dark)
