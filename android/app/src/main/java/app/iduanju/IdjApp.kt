@@ -22,6 +22,8 @@ class IdjApp : Application(), coil.ImageLoaderFactory {
         private set
     lateinit var huangguo: app.iduanju.core.huangguo.HuangguoClient
         private set
+    lateinit var updater: app.iduanju.update.AppUpdater
+        private set
 
     /** Covers: 黄果 CDNs obfuscate images (AES / XOR) — decoded in an OkHttp interceptor. */
     override fun newImageLoader(): coil.ImageLoader = coil.ImageLoader.Builder(this)
@@ -47,6 +49,7 @@ class IdjApp : Application(), coil.ImageLoaderFactory {
         manga = app.iduanju.manga.MangaStore(this)
         huangguo = app.iduanju.core.huangguo.HuangguoClient(filesDir, app.iduanju.huangguo.PrefsMap(this))
         app.iduanju.core.hls.HLSAdFilter.enabled = settings.adStripEnabled
+        updater = app.iduanju.update.AppUpdater(this)
     }
 
     companion object {

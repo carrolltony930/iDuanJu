@@ -91,6 +91,11 @@ fun ProfileScreen(onOpenDetail: (String) -> Unit = {}) {
                 LinkRow("插件", ProfileIcons.plugin, trailing = n.takeIf { it > 0 }?.let { "$it 个" }) { go("plugins") }
                 RowDivider()
                 LinkRow("开源许可", ProfileIcons.license) { go("licenses") }
+                RowDivider()
+                val up = ia.updater
+                LinkRow("检查更新", ProfileIcons.update, trailing = if (up.checking) "检查中…" else up.currentVersion.joinToString(".")) {
+                    scope.launch { up.manualCheck()?.let { message = it } }
+                }
             }
             Group {
                 ActRow("重置红果设备注册", ProfileIcons.reset, scope, { message = it }) { withContext(Dispatchers.IO) { ia.hongguo.resetDevice() }; "已重置红果设备" }

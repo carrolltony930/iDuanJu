@@ -123,6 +123,7 @@ internal object ProfileIcons {
     val sources = Icons.Outlined.Layers
     val plugin = Icons.Outlined.Extension
     val license = Icons.Outlined.Description
+    val update = Icons.Outlined.SystemUpdate
     val reset = Icons.Outlined.Refresh
     val key = Icons.Outlined.Key
     val photos = Icons.Outlined.PhotoLibrary

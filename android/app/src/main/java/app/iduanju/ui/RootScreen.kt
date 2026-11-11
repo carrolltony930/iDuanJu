@@ -34,6 +34,8 @@ val LocalNavigate = androidx.compose.runtime.staticCompositionLocalOf<(String) -
 fun RootScreen(initialRoute: String? = null) {
     val nav = rememberNavController()
     LaunchedEffect(initialRoute) { initialRoute?.let { runCatching { nav.navigate(it) } } }
+    val updater = app.iduanju.IdjApp.instance.updater
+    LaunchedEffect(Unit) { updater.autoCheck() }
     var tab by remember { mutableIntStateOf(0) }
     val back = nav.currentBackStackEntryAsState().value
     val route = back?.destination?.route ?: "home"
@@ -112,5 +114,6 @@ fun RootScreen(initialRoute: String? = null) {
                 modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 4.dp),
             )
         }
+        app.iduanju.update.UpdateDialog(updater)
     }
 }
