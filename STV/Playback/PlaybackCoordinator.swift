@@ -325,12 +325,18 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         pipActive = false
         engine.setPiPActive(false)
         if !restoringPiP { setPaused(true) }
-        else if !backgrounded, !paused, !interrupted, readyIndex != nil, engine.isPaused { play() }
+        // Returning from PiP used to require `engine.isPaused`; a software-route stall does not
+        // flip that flag, so playback was left dead. Re-arm the session and resume unconditionally.
+        else if !backgrounded, !paused, readyIndex != nil { activateAudioSession(); play() }
         restoringPiP = false
     }
 
     func didEnterBackground() {
         backgrounded = true
+        // No Now Playing presence is published any more (Dynamic Island stays quiet), so keep the
+        // .playback audio session explicitly alive: this is what still tells iOS STV is a media app
+        // and prevents the session / stream from being torn down while backgrounded.
+        activateAudioSession()
         save(force: true)
     }
 
@@ -341,7 +347,12 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
             restoringPiP = true
             pip?.stopPictureInPicture()
         }
-        if !paused, !interrupted, readyIndex != nil, engine.isPaused { play() }
+        // Coming back from another app: re-arm the audio session, clear a stale interruption flag,
+        // and resume unconditionally. Aether's software route can stall in the background without
+        // ever flipping `isPaused`, so the old `engine.isPaused` guard left playback dead.
+        interrupted = false
+        activateAudioSession()
+        if !paused, readyIndex != nil { play() }
     }
 
     private func handleInterruption(_ notification: Notification) {
