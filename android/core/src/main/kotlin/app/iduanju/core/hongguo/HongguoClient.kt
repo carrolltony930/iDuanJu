@@ -45,8 +45,6 @@ class HongguoClient(
     @Volatile private var device: HGDevice? = null
     /** Diagnostics: which identity served the last successful pure resolve (override / registered / mint). */
     @Volatile var lastPureRoute: String = ""
-    /** Pure-profile device registered this session (memory only; see resolveFresh). */
-    @Volatile private var registeredPure: HGOneShotDevice.Identity? = null
     private val vmDeviceId = vmID()
     private val vmInstallId = vmID()
     private val resolveCache = LinkedHashMap<String, Pair<HGResolvedVideo, Long>>()
@@ -471,34 +469,13 @@ class HongguoClient(
     fun resolveFresh(vid: String): HGResolvedVideo {
         var soft = false
         val hasOverride = HGPlayerDevice.overrideProvider?.invoke()?.let { it.first.isNotEmpty() && it.second.isNotEmpty() } == true
-        if (!hasOverride && HGOneShotDevice.enabled) {
-            // No override: a locally minted (never registered) device is soft-rejected. With the Argus 551 /
-            // Ladon signer (HGPlaybackSign) one pure-profile registration keeps serving consecutive episodes
-            // (live 2026-11-10: PPPPPPPP), so register once, reuse it, and re-register only when rejected.
-            levels@ for (level in listOf(3, 4)) {
-                for (attempt in 0 until 2) {
-                    val ids = registeredPure ?: HGOneShotDevice.register(http)?.also { registeredPure = it }
-                        ?: run { System.err.println("[HG] pure device register failed"); null } ?: break@levels
-                    try {
-                        val r = resolvePure(vid, level, ids)
-                        if (r.err == BYTEVC2 && level == 3) continue@levels
-                        lastPureRoute = "registered"
-                        return r
-                    } catch (_: PlayerEmptyBody) {
-                        soft = true; registeredPure = null
-                        System.err.println("[HG] registered device rejected level=$level attempt=$attempt → re-register")
-                        Thread.sleep(800)
-                    } catch (e: Exception) {
-                        System.err.println("[HG] registered pure error level=$level: $e"); break
-                    }
-                }
-            }
-        }
+        // iOS 45d3971: make sure a device_register device exists before video_model (purePlayerIds prefers it).
+        runCatching { ensureDevice() }
         for (level in listOf(3, 4)) {
             try {
                 val r = resolvePure(vid, level)
                 if (r.err == BYTEVC2 && level == 3) continue
-                lastPureRoute = if (hasOverride) "override" else "mint"
+                lastPureRoute = if (hasOverride) "override" else if (device != null) "registered" else "mint"
                 return r
             } catch (_: PlayerEmptyBody) {
                 soft = true; System.err.println("[HG] resolvePure empty level=$level")
@@ -535,6 +512,9 @@ class HongguoClient(
     /** Pure player device: override via HGPlayerDevice.overrideProvider, else local mint (public hygiene). */
     private fun purePlayerIds(): Pair<String, String> {
         HGPlayerDevice.overrideProvider?.invoke()?.let { if (it.first.isNotEmpty() && it.second.isNotEmpty()) return it }
+        // iOS 45d3971: video_model only accepts devices that went through device_register (a locally minted
+        // did/iid gets 200 + 0 bytes, a registered one returns video_model). Prefer the registered one.
+        (device ?: HGDevice.load(dataDir))?.let { return it.deviceId to it.iid }
         val d = HGPlayerDevice.current()
         return d.deviceId to d.iid
     }
