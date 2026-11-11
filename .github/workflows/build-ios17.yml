@@ -5,9 +5,13 @@ on:
 
 jobs:
   build:
-    name: Build iOS 17 Unsigned IPA
-    runs-on: macos-15
+    name: Build iOS 17 Unsigned IPA (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,12 +53,12 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: STV-ios17-unsigned
+          name: STV-ios17-unsigned-${{ matrix.runner }}
           path: STV-ios17-unsigned.ipa
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
+          name: build-log-${{ matrix.runner }}
           path: build.log
