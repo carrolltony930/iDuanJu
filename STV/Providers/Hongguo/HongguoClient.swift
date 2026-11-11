@@ -520,6 +520,7 @@ actor HongguoClient {
 
     func resolveFresh(vid: String) async throws -> HGResolvedVideo {
         var sawSoftReject = false
+        _ = try? await ensureDevice()   // make sure a device_register device exists before video_model
         // Full Argus 551 / Ladon on single video_model first; legacy batch remains a fallback.
         for level in [3, 4] {
             try Task.checkCancellation()
@@ -583,6 +584,9 @@ actor HongguoClient {
             let p = s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             if p.count == 2, !p[0].isEmpty, !p[1].isEmpty { return (p[0], p[1]) }
         }
+        // video_model only accepts devices that went through device_register (2026-11-11: a locally minted
+        // did/iid gets 200 + 0 bytes, a freshly registered one returns video_model). Prefer the registered one.
+        if let r = HGDevice.load() { return (r.deviceId, r.iid) }
         let d = HGPlayerDevice.current()
         return (d.deviceId, d.iid)
     }
