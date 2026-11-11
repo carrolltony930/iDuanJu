@@ -152,6 +152,8 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     private(set) var pipActive = false
     var pipError: String?
     private var restoringPiP = false
+    /// 仅当用户点击手动画中画按钮时为 true；用于区分系统后台自动启动。
+    private var userInitiatedPiP = false
     private var backgrounded = false
     private var interrupted = false
     private var audioSessionActive = false
@@ -167,13 +169,9 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     func start() {
         guard observer == nil else { return }
         let player = av.player
-        let session = MPNowPlayingSession(players: [player])
-        session.automaticallyPublishesNowPlayingInfo = true
-        nowPlaying = session
-        let commands = session.remoteCommandCenter
-        commands.playCommand.addTarget(self, action: #selector(remotePlay))
-        commands.pauseCommand.addTarget(self, action: #selector(remotePause))
-        commands.togglePlayPauseCommand.addTarget(self, action: #selector(remoteToggle))
+        // 不创建 MPNowPlayingSession：无灵动岛/锁屏播放标志，也避免它对
+        // AVPlayer.rate 的 KVO 在退出 teardown 时留下悬空观察者（v6 返回闪退根因）。
+        nowPlaying = nil
         let center = NotificationCenter.default
         audioObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
             MainActor.assumeIsolated { self?.handleInterruption(note) }
@@ -198,7 +196,7 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         RunLoop.main.add(t, forMode: .common)
         timer = t
         observer = t
-        registerSharedCommands()
+        // 不注册锁屏/耳机远程命令：不发布 Now Playing。
     }
 
     /// Lock-screen / headset commands while Aether plays (AVPlayer's own MPNowPlayingSession covers the fallback).
@@ -212,14 +210,8 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     }
 
     private func publishNowPlaying() {
-        guard engineKind == .aether, let i = readyIndex, episodes.indices.contains(i) else { return }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
-            MPMediaItemPropertyTitle: detail?.title ?? series.title,
-            MPMediaItemPropertyAlbumTitle: series.source.isLongVideo ? series.source.label : "第\(episodes[i].ep)集",
-            MPMediaItemPropertyPlaybackDuration: duration,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: time,
-            MPNowPlayingInfoPropertyPlaybackRate: paused ? 0.0 : playbackRate,
-        ]
+        // 不发布任何 Now Playing 信息（灵动岛/锁屏不显示播放标志）。
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     private func activateAudioSession() {
@@ -255,6 +247,8 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         }
         nowPlaying = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        userInitiatedPiP = false
         if pip?.isPictureInPictureActive == true {
             pip?.stopPictureInPicture()
         }
@@ -288,6 +282,18 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     /// (Re)build the PiP controller when the active core's picture route changes.
     private func refreshPiP() {
         let id = engine.pipIdentity
+        // 用户要求：滑出后台不得自动进入画中画。Aether 软件解码路径下
+        // canStartPictureInPictureAutomaticallyFromInline 在 iOS 17 不生效，
+        // 因此后台直接拆除 controller（系统没有 controller 就无法自动启动），
+        // 且不推进 pipIdentity，回前台 didBecomeActive() 会重建以供手动按钮使用。
+        guard !backgrounded || userInitiatedPiP else {
+            pipObservation = nil
+            pip?.delegate = nil
+            pip = nil
+            pipPossible = false
+            pipIdentity = nil
+            return
+        }
         guard id != pipIdentity else { return }
         guard !pipActive else { return }                 // never swap under a live PiP window
         pipIdentity = id
@@ -314,15 +320,26 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         guard let pip else { return }
         if pip.isPictureInPictureActive {
             restoringPiP = true
+            userInitiatedPiP = false
             pip.stopPictureInPicture()
         } else if pip.isPictureInPicturePossible {
+            userInitiatedPiP = true
             pip.startPictureInPicture()
         }
     }
 
     func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        // 后台且非用户点按钮 = 系统自动画中画，一律拒绝。
+        if backgrounded && !userInitiatedPiP { return }
         pipActive = true
         engine.setPiPActive(true)
+    }
+
+    func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        // 兜底：Aether 软件解码用 AVPictureInPictureController(contentSource:)，
+        // canStartPictureInPictureAutomaticallyFromInline 在 iOS 17 对它不生效，
+        // 若系统仍在后台把窗口拉起，这里立刻关掉。
+        if backgrounded && !userInitiatedPiP { controller.stopPictureInPicture() }
     }
 
     func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
@@ -337,19 +354,24 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
+        let rejectedAutoPiP = backgrounded && !userInitiatedPiP
         pipActive = false
         engine.setPiPActive(false)
-        if !restoringPiP { setPaused(true) }
+        if rejectedAutoPiP {
+            // 自动画中画被拒绝：保持原有播放状态，不误暂停（避免回前台断流）。
+        } else if !restoringPiP { setPaused(true) }
         // Returning from PiP used to require `engine.isPaused`; a software-route stall does not
         // flip that flag, so playback was left dead. Re-arm the session and resume unconditionally.
         else if !backgrounded, !paused, readyIndex != nil { activateAudioSession(); play() }
         restoringPiP = false
+        userInitiatedPiP = false
     }
 
     func didEnterBackground() {
         backgrounded = true
-        // 恢复 Now Playing 媒体身份后，仍显式激活 .playback 音频会话并落盘进度，
-        // 保证切后台时音视频会话不被系统拆掉。
+        // 禁止后台自动画中画：拆除 PiP controller（手动开启的会保留）。
+        refreshPiP()
+        // 显式激活 .playback 音频会话并落盘进度，保证切后台音视频会话不被拆掉。
         activateAudioSession()
         save(force: true)
     }
@@ -361,9 +383,9 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
             restoringPiP = true
             pip?.stopPictureInPicture()
         }
-        // Coming back from another app: re-arm the audio session, clear a stale interruption flag,
-        // and resume unconditionally. Aether's software route can stall in the background without
-        // ever flipping `isPaused`, so the old `engine.isPaused` guard left playback dead.
+        // 回到前台重建手动画中画按钮所需的 controller。
+        refreshPiP()
+        // 重新武装音频会话、清除过期中断标志并无条件续播，避免回前台断流。
         interrupted = false
         activateAudioSession()
         if !paused, readyIndex != nil { play() }
@@ -529,7 +551,7 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
                     let next = episodes.indices.filter { $0 > i && $0 <= i + 3 }.map { episodes[$0].vid }
                     Task { await HongguoClient.shared.prefetch(vids: next) }
                 }
-                if engineKind == .avplayer { _ = await nowPlaying?.becomeActiveIfPossible() } else { publishNowPlaying() }
+                // 不激活 Now Playing 会话、不发布媒体信息。
             } catch {
                 guard activation == token else { return }
                 errors[i] = error.localizedDescription
