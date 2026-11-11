@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import MediaPlayer
 import AVFoundation
+import Observation
 
 /// Brightness (left) / volume (right) vertical-swipe adjustment for the player.
 /// Zones: landscape = left/right half; portrait = outer 1/5 strips only (the middle keeps 抖音式 paging),
@@ -17,6 +18,40 @@ final class PlayerAdjuster {
     /// Hidden MPVolumeView slider — the sanctioned way to set system volume.
     weak var volumeSlider: UISlider?
 
+    /// The hidden MPVolumeView suppresses the system volume HUD, so pressing the physical
+    /// volume buttons used to give no visual feedback at all. Watch system volume and show our
+    /// own HUD for those changes too.
+    @ObservationIgnored private var volumeNoteObserver: NSObjectProtocol?
+    @ObservationIgnored private var gestureAdjusting = false
+
+    init() { startVolumeObservation() }
+
+    private func startVolumeObservation() {
+        guard volumeNoteObserver == nil else { return }
+        volumeNoteObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("AVSystemController_SystemVolumeDidChangeNotification"),
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let raw = note.userInfo?["AVSystemController_AudioVolumeNotificationParameter"] as? NSNumber else { return }
+            let value = raw.doubleValue
+            MainActor.assumeIsolated { self?.showSystemVolume(value) }
+        }
+    }
+
+    /// Called when the hardware buttons (or Control Center) change system volume.
+    @MainActor
+    private func showSystemVolume(_ value: Double) {
+        // During a swipe the gesture already drives the HUD; don't fight it.
+        guard !gestureAdjusting else { return }
+        hideTask?.cancel()
+        hud = (.volume, value)
+        hideTask = Task {
+            try? await Task.sleep(for: .seconds(1.1))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.2)) { hud = nil }
+        }
+    }
+
     static func zone(x: CGFloat, width: CGFloat, landscape: Bool, edge: CGFloat) -> AdjustSide? {
         guard width > 0, x >= edge, x <= width - 8 else { return nil }
         if landscape { return x < width / 2 ? .brightness : .volume }
@@ -27,6 +62,7 @@ final class PlayerAdjuster {
 
     func begin(_ side: AdjustSide) {
         hideTask?.cancel()
+        gestureAdjusting = true
         switch side {
         case .brightness:
             if originalBrightness == nil { originalBrightness = UIScreen.main.brightness }
@@ -48,6 +84,7 @@ final class PlayerAdjuster {
     }
 
     func end() {
+        gestureAdjusting = false
         hideTask = Task {
             try? await Task.sleep(for: .seconds(0.8))
             guard !Task.isCancelled else { return }
@@ -58,6 +95,10 @@ final class PlayerAdjuster {
     func restoreBrightness() {
         if let b = originalBrightness { UIScreen.main.brightness = b }
         originalBrightness = nil
+        if let obs = volumeNoteObserver {
+            NotificationCenter.default.removeObserver(obs)
+            volumeNoteObserver = nil
+        }
     }
 }
 
