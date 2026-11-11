@@ -283,7 +283,9 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         guard id != nil, AVPictureInPictureController.isPictureInPictureSupported(),
               let controller = engine.makePiPController() else { return }
         controller.delegate = self
-        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        // Automatic PiP when the app is backgrounded is disabled on purpose (user request).
+        // The manual PiP button (togglePiP) and the controller itself stay available.
+        controller.canStartPictureInPictureAutomaticallyFromInline = false
         pip = controller
         pipObservation = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] controller, _ in
             Task { @MainActor in
