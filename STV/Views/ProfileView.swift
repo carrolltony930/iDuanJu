@@ -17,7 +17,7 @@ struct ProfileView: View {
                 .background(STVTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal, 16)
                 VStack(spacing: 0) {
-                    link("Telegram 频道", "paperplane", .channels, trailing: "\(TGStore.shared.visibleChannels.count) 个")
+                    // Telegram 频道入口已下线（用户不使用 TDLib API）
                     link("漫画", "book", .mangaHome, trailing: MangaStore.shared.favorites.isEmpty ? nil : "收藏 \(MangaStore.shared.favorites.count)")
                     link("下载管理", "arrow.down.circle", .downloads, trailing: TGDownloads.shared.visible.isEmpty ? nil : "\(TGDownloads.shared.visible.count)")
                 }

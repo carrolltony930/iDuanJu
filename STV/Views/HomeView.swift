@@ -71,7 +71,8 @@ enum HomeSource: Hashable, Identifiable {
     }
     @MainActor static var all: [HomeSource] {
         let g = SourceGate.shared
-        return [.hongguo] + (g.showHuangguo ? [.huangguo] : []) + [.ai] + g.visibleSites.map { .site($0) } + [.channels, .manga, .novel]
+        // Telegram 频道已按用户要求下线（不用它的 API），不再出现在站源栏
+        return [.hongguo] + (g.showHuangguo ? [.huangguo] : []) + [.ai] + g.visibleSites.map { .site($0) } + [.manga, .novel]
     }
 }
 
