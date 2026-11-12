@@ -251,25 +251,22 @@ struct PlayerSpeedHUD: View {
     var rate: Double
 
     var body: some View {
-        HStack(spacing: 8) {
+        // 常规播放器的倍速提示：小号深色胶囊，字号约 15pt，不抢画面。
+        HStack(spacing: 6) {
             Image(systemName: "gauge.with.dots.needle.67percent")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
             Text(PlaybackCoordinator.formatRate(rate))
-                .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 22)
-        .padding(.vertical, 16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(colors: [.white.opacity(0.3), .white.opacity(0.08)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 0.8
-                )
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(.white.opacity(0.15), lineWidth: 0.6)
         )
-        .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
+        .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
     }
 }
 
