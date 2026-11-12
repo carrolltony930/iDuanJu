@@ -144,7 +144,7 @@ private fun rankColor(r: Int): Color = when (r) { 1 -> Color(1f, 0.27f, 0.2f); 2
 
 /** iOS NumberedPosterCell: big italic 2-digit rank with coloured offset shadow, 新剧 tag, meta bottom-right. */
 @Composable
-private fun NumberedPosterCell(s: HGSeries, rank: Int?, onOpen: (String) -> Unit) {
+internal fun NumberedPosterCell(s: HGSeries, rank: Int?, onOpen: (String) -> Unit) {
     val c = IdjThemeColors
     Column(Modifier.clickable { onOpen(s.seriesId) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.fillMaxWidth().aspectRatio(3f / 4f).clip(RoundedCornerShape(10.dp)).background(c.elevated)) {
