@@ -2,22 +2,30 @@ name: Build iOS 17 IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner 池（arm64 拥堵时可换 macos-15-intel）'
+        required: false
+        default: 'macos-15'
+        type: choice
+        options:
+          - macos-15
+          - macos-15-intel
+          - macos-latest
+          - macos-26
 
 jobs:
   build:
-    name: Build iOS 17 Unsigned IPA (${{ matrix.runner }})
-    runs-on: ${{ matrix.runner }}
+    name: Build iOS 17 Unsigned IPA (${{ inputs.runner || 'macos-15' }})
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 150
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Select newest Xcode
         run: |
+          uname -m
           ls -d /Applications/Xcode*.app || true
           NEWEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
           echo "selected: $NEWEST"
@@ -48,6 +56,8 @@ jobs:
         run: |
           APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
           echo "APP=$APP"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist" || true
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist" || true
           /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist" || true
           rm -rf Payload && mkdir Payload
           cp -R "$APP" Payload/
@@ -57,12 +67,12 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: STV-ios17-unsigned-${{ matrix.runner }}
+          name: STV-ios17-unsigned-${{ inputs.runner || 'macos-15' }}
           path: STV-ios17-unsigned.ipa
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-${{ matrix.runner }}
+          name: build-log-${{ inputs.runner || 'macos-15' }}
           path: build.log
