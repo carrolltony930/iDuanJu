@@ -228,7 +228,12 @@ final class PluginNet: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         }
         lock.lock(); redirectInfo[task.taskIdentifier] = (follow, nil, 0); lock.unlock()
         task.resume()
-        sem.wait()
+        // 不能无限等：URLSession 偶尔不回调时，插件线程会被永久占住，进而拖死后续调用。
+        if sem.wait(timeout: .now() + timeout + 5) == .timedOut {
+            task.cancel()
+            lock.lock(); _ = redirectInfo.removeValue(forKey: task.taskIdentifier); lock.unlock()
+            throw PluginError.runtime(code: "E_TIMEOUT", message: "\(url.host ?? "")：请求超时")
+        }
         lock.lock(); let info = redirectInfo.removeValue(forKey: task.taskIdentifier); lock.unlock()
         if let blocked = info?.blocked {
             log("✕ 跳转被拦截 \(url.host ?? "") → \(blocked)")

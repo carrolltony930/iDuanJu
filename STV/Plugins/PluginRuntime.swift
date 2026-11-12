@@ -301,7 +301,10 @@ final class PluginInstance: @unchecked Sendable {
             h.endCall()
             sem.signal()
         }
-        sem.wait()
+        if sem.wait(timeout: .now() + 12) == .timedOut {
+            thread.stop()
+            throw PluginError.runtime(code: "E_INTERNAL", message: "插件引擎无响应（初始化超时）")
+        }
         if let failure { thread.stop(); throw failure }
     }
 
