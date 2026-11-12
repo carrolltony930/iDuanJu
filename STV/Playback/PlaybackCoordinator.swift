@@ -748,10 +748,10 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
                 guard let u = URL(string: s.url) else { throw ProviderError.invalid(s.url) }
                 return .remote(u, s.headers)
             case .mp4Clear, .hls, .hlsAES:
-                // 渐进式 MP4 不走本地代理：代理要自己处理 Range/长度探测，实测会给出截断的响应
-                // （91porn 表现为时长只有 5 秒、黑屏），并让切换线路时卡住主线程。
-                // AVPlayer 自己处理 Range 已经足够，直接给它原地址 + 请求头最稳。
-                if s.kind == .mp4Clear {
+                // 插件源的渐进式 MP4 不走本地代理：代理要自己处理 Range/长度探测，实测会给出截断的
+                // 响应（91porn 表现为时长只有 5 秒、黑屏），并让切换线路时卡住主线程。
+                // 内置源（红果/hanime1/supjav/eporner/xvideos）保持原样，避免影响已验证可用的路径。
+                if s.kind == .mp4Clear, series.source.rawValue.hasPrefix("p.") {
                     guard let u = URL(string: s.url) else { throw ProviderError.invalid(s.url) }
                     return .remote(u, s.headers)
                 }
