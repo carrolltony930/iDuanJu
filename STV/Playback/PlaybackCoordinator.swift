@@ -516,6 +516,14 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         save(force: true)
         let token = UUID()
         activation = token
+        // 看门狗：25 秒还没出画面就报错并可重试，避免无限转圈（线路本身失效、代理卡住等）。
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(25))
+            guard let self, self.activation == token, self.readyIndex == nil, self.errors[i] == nil else { return }
+            self.errors[i] = "载入超时（25 秒没拿到画面），点重试或换线路"
+            self.activation = UUID()
+            self.engine.pause()
+        }
         if let r = readyIndex, heldFrame == nil, let img = Self.snapshot(engine.surface) { heldFrame = (img, r) }
         readyIndex = nil
         engine.pause()
@@ -816,7 +824,10 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
 
     func choose(_ s: HGStream, for i: Int) {
         guard chosen[i] != s else { return }
-        if let tok = prefetchTokens.removeValue(forKey: i) { LocalHLSProxy.shared.release(tok) }
+        // 释放旧线路的代理路由/预取缓存不在主线程做，否则切线路会假死。
+        if let tok = prefetchTokens.removeValue(forKey: i) {
+            Task.detached(priority: .utility) { LocalHLSProxy.shared.release(tok) }
+        }
         tasks.removeValue(forKey: i)?.cancel()
         chosen[i] = s; prepared[i] = nil
         if current == i { activate(i) }

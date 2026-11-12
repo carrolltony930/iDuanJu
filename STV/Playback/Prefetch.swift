@@ -130,7 +130,15 @@ final class PrefetchStore: @unchecked Sendable {
         try? data.write(to: file(token, key), options: .atomic)
     }
 
-    func remove(_ token: String) { try? fm.removeItem(at: root.appendingPathComponent(token)) }
+    /// Deletes a token's cache **off the caller's thread**: with a 500 MB budget this directory can hold
+    /// hundreds of segments, and doing it inline froze the UI when the user switched streams.
+    func remove(_ token: String) {
+        let dir = root.appendingPathComponent(token)
+        guard FileManager.default.fileExists(atPath: dir.path) else { return }
+        DispatchQueue.global(qos: .utility).async {
+            try? FileManager.default.removeItem(at: dir)
+        }
+    }
 
     func clearAll() {
         try? fm.removeItem(at: root)
