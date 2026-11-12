@@ -33,9 +33,11 @@ fun SourcesScreen(onBack: () -> Unit) {
     SettingsPage("片源管理", onBack) {
         Group("内置") {
             BuiltinRow("红果短剧", ProfileIcons.play)
+            RowDivider()
+            BuiltinRow("黄果短剧", ProfileIcons.film, if (adult) null else "成人 · 默认隐藏")
         }
         Group("成人内容（默认隐藏）", footer = "开启后黄果、标记为成人的采集站 / 插件 / Telegram 频道 / 漫画插件才会出现在首页、搜索、频道与漫画；所有结果一律过滤未成年人与非自愿题材。") {
-            SwitchRow("显示成人片源", ProfileIcons.film, "黄果短剧、成人采集站 / 插件 / 频道 / 漫画 · 仅限年满 18 周岁", adult) {
+            SwitchRow("显示成人片源", null, "仅限年满 18 周岁", adult) {
                 if (it) confirmAdult = true else { ia.cms.adultUnlocked = false; message = "已隐藏成人片源" }
             }
         }
