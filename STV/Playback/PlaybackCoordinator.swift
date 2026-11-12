@@ -748,14 +748,15 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
                 guard let u = URL(string: s.url) else { throw ProviderError.invalid(s.url) }
                 return .remote(u, s.headers)
             case .mp4Clear, .hls, .hlsAES:
-                let budget = bypass ? 0 : BufferSettings.budget(for: series.source)
-                if budget > 0, let proxied = await self?.prebuffered(s, budget: budget, index: i) { return proxied }
-                // 没有预缓冲预算时，MP4 不能掉进下面的 HLSPlayback（那会把 .mp4 当播放列表解析，永远转圈）。
-                // 直接交给 AVPlayer 走原地址。
+                // 渐进式 MP4 不走本地代理：代理要自己处理 Range/长度探测，实测会给出截断的响应
+                // （91porn 表现为时长只有 5 秒、黑屏），并让切换线路时卡住主线程。
+                // AVPlayer 自己处理 Range 已经足够，直接给它原地址 + 请求头最稳。
                 if s.kind == .mp4Clear {
                     guard let u = URL(string: s.url) else { throw ProviderError.invalid(s.url) }
                     return .remote(u, s.headers)
                 }
+                let budget = bypass ? 0 : BufferSettings.budget(for: series.source)
+                if budget > 0, let proxied = await self?.prebuffered(s, budget: budget, index: i) { return proxied }
                 if viaAether, s.kind != .mp4Clear, s.key.isEmpty {
                     // Aether hands HLS to AVPlayer on a URL: keep our playlist rewriting (ad-strip, headers,
                     // SupJav fake-PNG) by serving it from the loopback proxy.
