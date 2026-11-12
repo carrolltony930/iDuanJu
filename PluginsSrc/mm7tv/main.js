@@ -181,8 +181,8 @@ export default {
 
     // 2) 先按域名分流：DoodStream 系 embed（playmogo / mmsi / dood）挂了 Turnstile 人机验证，
     //    插件和播放器都过不去，直接给一句人话，别让它变成「域名未授权」。
-    const host = (String(embed).match(/^https?:\/\/([^\/]+)/) || [])[1] || '';
-    if (/(playmogo|mmsi\d*|dood|ds2play|d000d|doodstream)/i.test(host)) {
+    const embHost = (String(embed).match(/^https?:\/\/([^\/]+)/) || [])[1] || '';
+    if (/(playmogo|mmsi\d*|dood|ds2play|d000d|doodstream)/i.test(embHost)) {
       throw host.error('E_UNSUPPORTED', '这个视频托管在 DoodStream，需要人机验证，暂不支持');
     }
 
