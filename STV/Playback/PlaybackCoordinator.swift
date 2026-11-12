@@ -512,6 +512,7 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     func releaseHeldFrame() { if heldFrame != nil { heldFrame = nil } }
 
     func activate(_ i: Int) {
+        AppTrace.set("activate #\(i)")
         guard i == current, episodes.indices.contains(i), observer != nil else { return }
         save(force: true)
         let token = UUID()
@@ -701,6 +702,7 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     }
 
     private func prepare(_ i: Int) async throws -> Source {
+        AppTrace.set("prepare #\(i)")
         if let source = prepared[i] {
             if case .file(let url) = source, !FileManager.default.fileExists(atPath: url.path) {
                 prepared[i] = nil
@@ -778,6 +780,7 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     /// Long-video sources go through the loopback proxy so segments / MP4 ranges come from the byte
     /// pre-buffer. AES-128 streams with an out-of-band key keep the resource-loader path.
     private func prebuffered(_ s: HGStream, budget: Int, index i: Int) -> Source? {
+        AppTrace.set("prebuffer #\(i))
         if let tok = LocalHLSProxy.token(of: s.url) {           // SupJav: already proxied
             LocalHLSProxy.shared.enablePrefetch(tok, budget: budget)
             prefetchTokens[i] = tok
@@ -824,6 +827,7 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     }
 
     func choose(_ s: HGStream, for i: Int) {
+        AppTrace.set("choose #\(i)")
         guard chosen[i] != s else { return }
         // 释放旧线路的代理路由/预取缓存不在主线程做，否则切线路会假死。
         if let tok = prefetchTokens.removeValue(forKey: i) {

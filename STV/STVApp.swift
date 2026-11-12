@@ -5,6 +5,8 @@ struct STVApp: App {
     @UIApplicationDelegateAdaptor(OrientationGate.self) private var orientation
     init() {
         CFSolver.install()
+        // 主线程卡顿看门狗：卡住时把「卡了多久 + 当时在做什么」写进站点诊断日志。
+        MainThreadWatchdog.start()
         // Load plugin / 采集站 indexes before anything reads `Sites.all` or `SourceGate`.
         MainActor.assumeIsolated { _ = CMSStore.shared; _ = PluginStore.shared }
     }
