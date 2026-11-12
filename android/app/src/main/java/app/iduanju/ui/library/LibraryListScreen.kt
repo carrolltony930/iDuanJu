@@ -32,11 +32,19 @@ fun LibraryListScreen(kind: String, onBack: () -> Unit, onOpenDetail: (String) -
     val c = IdjThemeColors
     val lib = IdjApp.instance.library
     val fav = kind == "favorites"
+    var confirmClear by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    if (confirmClear) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { confirmClear = false },
+        title = { Text("清空全部观看记录？") },
+        text = { Text("只删除本机的观看进度，收藏不受影响。") },
+        confirmButton = { TextButton({ lib.clearHistory(); confirmClear = false }) { Text("清空 ${lib.history.size} 条记录", color = c.accentWarm) } },
+        dismissButton = { TextButton({ confirmClear = false }) { Text("取消") } },
+    )
     Column(Modifier.fillMaxSize().background(c.bg).statusBarsPadding()) {
         Box(Modifier.fillMaxWidth().height(48.dp)) {
             IconButton(onBack, Modifier.align(Alignment.CenterStart)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回", tint = c.text) }
             Text(if (fav) "我的收藏" else "观看历史", color = c.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.Center))
-            if (!fav && lib.history.isNotEmpty()) TextButton({ lib.clearHistory() }, Modifier.align(Alignment.CenterEnd)) { Text("清空") }
+            if (!fav && lib.history.isNotEmpty()) TextButton({ confirmClear = true }, Modifier.align(Alignment.CenterEnd)) { Text("清空") }
         }
         if (fav) {
             val items = lib.favorites.entries.sortedByDescending { it.value.third }

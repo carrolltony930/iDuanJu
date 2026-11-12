@@ -722,7 +722,8 @@ struct PlayerScreen: View {
 
     /// 播放源 rows: the current source, plus the same title on the other short-drama source (红果 ⇄ 黄果).
     private var sourceRows: [(title: String, detail: String, current: Bool, action: () -> Void)] {
-        guard series.source == .hongguo || series.source == .huangguo else { return [] }
+        // 红果 ⇄ 黄果 only while 黄果 is switched on in 片源管理 (18+).
+        guard series.source == .huangguo || (series.source == .hongguo && SourceGate.shared.showHuangguo) else { return [] }
         var rows: [(title: String, detail: String, current: Bool, action: () -> Void)] = [(series.source.label, "当前", true, {})]
         for s in altSources.prefix(2) {
             rows.append((s.source.label, "备用", false, { panel = nil; onSwitchSeries(s) }))
@@ -740,7 +741,7 @@ struct PlayerScreen: View {
         func norm(_ s: String) -> String { s.replacingOccurrences(of: " ", with: "").lowercased() }
         var found: [HGSeries] = []
         if series.source == .hongguo {
-            if let r = try? await HuangguoClient.shared.search(title) { found = r.filter { norm($0.title) == norm(title) } }
+            if SourceGate.shared.showHuangguo, let r = try? await HuangguoClient.shared.search(title) { found = r.filter { norm($0.title) == norm(title) } }
         } else if series.source == .huangguo {
             if let r = try? await HongguoClient.shared.search(title) { found = r.items.filter { norm($0.title) == norm(title) } }
         }

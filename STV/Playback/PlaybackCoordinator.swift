@@ -171,7 +171,20 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         let player = av.player
         // 不创建 MPNowPlayingSession：无灵动岛/锁屏播放标志，也避免它对
         // AVPlayer.rate 的 KVO 在退出 teardown 时留下悬空观察者（v6 返回闪退根因）。
+        // [merge 2026-11-13] 保留本分支的选择：不建 session。上游此处的
+        // session/remoteCommandCenter 一并略过——遥控命令由 configureRemoteCommands
+        // （Aether 路径）与 AVPlayer 自带通道覆盖。
         nowPlaying = nil
+        #if DEBUG
+        // UI tests: an interruption that never ends (STV_FAKE_INTERRUPT=<seconds after start>).
+        if let s = ProcessInfo.processInfo.environment["STV_FAKE_INTERRUPT"].flatMap(Double.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + s) { [weak self] in
+                self?.engine.pause()
+                NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(),
+                    userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue])
+            }
+        }
+        #endif
         let center = NotificationCenter.default
         audioObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
             MainActor.assumeIsolated { self?.handleInterruption(note) }
@@ -185,7 +198,9 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
             // PiP controls target AVPlayer directly. System background/interruption pauses must not erase play intent.
             guard note.userInfo?[AVPlayer.rateDidChangeReasonKey] as? String == AVPlayer.RateDidChangeReason.setRateCalled.rawValue else { return }
             MainActor.assumeIsolated {
-                guard let self, self.engineKind == .avplayer, self.pipActive, !self.restoringPiP, !self.interrupted, self.readyIndex != nil else { return }
+                guard let self, self.engineKind == .avplayer, self.pipActive, !self.restoringPiP, self.readyIndex != nil else { return }
+                // ▶ in the PiP window after an interruption: the user resumed, so drop the stale flag (see setPaused).
+                if self.av.player.rate > 0 { self.interrupted = false; self.activateAudioSession() } else if self.interrupted { return }
                 self.paused = self.av.player.rate == 0
             }
         })
@@ -791,7 +806,8 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     // MARK: Controls
 
     func togglePause() {
-        setPaused(!paused)
+        // Interrupted: playback is already stopped whatever the button shows, so this tap means ▶.
+        setPaused(interrupted ? false : !paused)
     }
 
     private func setPaused(_ value: Bool) {
@@ -799,9 +815,18 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         if value {
             engine.pause()
             save(force: true)
-        } else if !interrupted, readyIndex != nil {
+        } else if readyIndex != nil {
+            // An explicit play wins over a stale interruption: iOS does not promise an `.ended` (another app's
+            // audio, PiP interrupted by another app), and waiting for it left ▶ dead until the player was reopened.
+            let wasInterrupted = interrupted
+            interrupted = false
             if duration > 0, engine.currentTime >= duration - 0.15, engine.kind == .avplayer { seek(fraction: 0) }
-            play()
+            if wasInterrupted, let a = engine as? AetherPlayerEngine {
+                activateAudioSession()
+                a.playThroughInterruption(rate: min(playbackRate, engine.maxRate))
+            } else {
+                play()
+            }
         }
         publishNowPlaying()
     }

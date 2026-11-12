@@ -11,6 +11,7 @@ final class HomeInteractionUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchEnvironment["STV_HERO_STILL"] = "1"
+        app.launchEnvironment["STV_SOURCES"] = "huangguo"   // 黄果 is 18+ and hidden by default
         app.launch()
         XCTAssertTrue(el("home.page.红果").waitForExistence(timeout: 15))
     }

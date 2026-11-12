@@ -119,7 +119,7 @@ fun HomeScreen(onOpenDetail: (String) -> Unit, onSearch: () -> Unit = {}, onPlay
     // iOS HomeSource.all: [红果, 黄果, AI剧] + visible sites (采集站 / plugins) + [频道, 漫画]
     val sites = IdjApp.instance.cms.visibleSites
     val plugins = IdjApp.instance.plugins.visible(IdjApp.instance.cms.adultUnlocked).filter { it.type == "video" || it.type == "shortdrama" }
-    val pages: List<Any> = listOf<Any>(HomeSource.hongguo, HomeSource.huangguo, HomeSource.ai) + sites + plugins + listOf(HomeSource.channels, HomeSource.manga)
+    val pages: List<Any> = listOf<Any>(HomeSource.hongguo) + (if (IdjApp.instance.cms.adultUnlocked) listOf<Any>(HomeSource.huangguo) else emptyList()) + listOf<Any>(HomeSource.ai) + sites + plugins + listOf(HomeSource.channels, HomeSource.manga)
     val labels = pages.map { when (it) { is HomeSource -> it.label; is app.iduanju.core.cms.CMSSite -> it.name; else -> (it as app.iduanju.plugin.PluginStore.Installed).name } }
     val pager = rememberPagerState { pages.size }
     LaunchedEffect(HomeJump.label, pages.size) {
@@ -352,11 +352,12 @@ private fun FeedPage(source: HomeSource, onOpen: (String) -> Unit, onHero: (Stri
             val cw = IdjApp.instance.library.continueWatching
             if (source == HomeSource.hongguo && cw.isNotEmpty()) ContinueRow(cw, onOpen)
             val heroIds = heroPicks.map { it.seriesId }.toSet()
+            val go = app.iduanju.ui.LocalNavigate.current
             boards.forEachIndexed { n, b ->
                 LaunchedEffect(b.id) { BoardCache.load(b) }
                 val items = BoardCache.items[b.id]
                 val rest = if (n == 0) items?.filter { it.seriesId !in heroIds } else items
-                HomeSection(b.title, if (BoardCache.failed.containsKey(b.id) && items == null) "加载失败，下拉重试" else null, rest?.take(6), onOpen)
+                HomeSection(b.title, if (BoardCache.failed.containsKey(b.id) && items == null) "加载失败，下拉重试" else null, rest?.take(6), onOpen) { go("board/${b.genre.name}/${b.sub.name}") }
             }
         }
     }
@@ -460,14 +461,14 @@ fun HomeBadge(text: String, modifier: Modifier = Modifier) {
 
 /** iOS HomeSection: 17 bold title + 「全部 >」, 3 flexible columns (spacing 10 / 16), max 6 cards. */
 @Composable
-private fun HomeSection(title: String, note: String?, items: List<HGSeries>?, onOpen: (String) -> Unit) {
+private fun HomeSection(title: String, note: String?, items: List<HGSeries>?, onOpen: (String) -> Unit, onMore: () -> Unit) {
     val c = IdjThemeColors
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text(title, color = c.text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             if (note != null) { Spacer(Modifier.width(12.dp)); Text(note, color = c.secondary, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
             Spacer(Modifier.weight(1f))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.clickable(onClick = onMore).padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("全部", color = c.secondary, fontSize = 13.sp)
                 Icon(Icons.Filled.KeyboardArrowRight, null, tint = c.secondary, modifier = Modifier.size(14.dp))
             }

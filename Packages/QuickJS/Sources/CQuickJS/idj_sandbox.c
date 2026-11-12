@@ -113,7 +113,7 @@ static JSValue js_host(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     return v;
 }
 
-IDJBox *idj_new(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque) {
+static IDJBox *new_box(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque, int with_eval) {
     IDJBox *b = calloc(1, sizeof(IDJBox));
     if (!b) return NULL;
     b->fn = fn;
@@ -135,6 +135,7 @@ IDJBox *idj_new(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaq
     JS_AddIntrinsicTypedArrays(ctx);
     JS_AddIntrinsicPromise(ctx);
     JS_AddIntrinsicBigInt(ctx);
+    if (with_eval) JS_AddIntrinsicEval(ctx);
     JS_SetContextOpaque(ctx, b);
     b->ctx = ctx;
     JSValue global = JS_GetGlobalObject(ctx);
@@ -143,14 +144,24 @@ IDJBox *idj_new(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaq
     return b;
 }
 
+IDJBox *idj_new(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque) {
+    return new_box(mem_limit, stack_limit, fn, opaque, 0);
+}
+
+/// Same sandbox with eval / new Function enabled: 「阅读」 book-source scripts (code the user imported) use them.
+/// Plugins keep using idj_new.
+IDJBox *idj_new_with_eval(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque) {
+    return new_box(mem_limit, stack_limit, fn, opaque, 1);
+}
+
 /// Compiles `src` in a throw-away context that has the parser, returns bytecode (js_free_rt it).
-static uint8_t *compile(IDJBox *b, const char *src, const char *filename, int module, size_t *len, char **err) {
+static uint8_t *compile_mode(IDJBox *b, const char *src, const char *filename, int module, int strict, size_t *len, char **err) {
     JSContext *c = JS_NewContextRaw(b->rt);
     JS_AddIntrinsicBaseObjects(c);
     JS_AddIntrinsicEval(c);
     JS_AddIntrinsicRegExpCompiler(c);
     JSValue f = JS_Eval(c, src, strlen(src), filename,
-                        (module ? JS_EVAL_TYPE_MODULE : JS_EVAL_TYPE_GLOBAL) | JS_EVAL_FLAG_COMPILE_ONLY | JS_EVAL_FLAG_STRICT);
+                        (module ? JS_EVAL_TYPE_MODULE : JS_EVAL_TYPE_GLOBAL) | JS_EVAL_FLAG_COMPILE_ONLY | (strict || module ? JS_EVAL_FLAG_STRICT : 0));
     uint8_t *buf = NULL;
     if (JS_IsException(f)) {
         JSValue e = JS_GetException(c);
@@ -165,6 +176,10 @@ static uint8_t *compile(IDJBox *b, const char *src, const char *filename, int mo
     JS_FreeValue(c, f);
     JS_FreeContext(c);
     return buf;
+}
+
+static uint8_t *compile(IDJBox *b, const char *src, const char *filename, int module, size_t *len, char **err) {
+    return compile_mode(b, src, filename, module, 1, len, err);
 }
 
 /// Drains the job queue until `v` (a promise) settles. Returns the settled value (owned) or JS_EXCEPTION.
@@ -284,14 +299,14 @@ char *idj_call(IDJBox *b, const char *fn, const char *arg_json, double timeout_s
     return out;
 }
 
-char *idj_eval_script(IDJBox *b, const char *src, double timeout_sec, char **err) {
+static char *eval_impl(IDJBox *b, const char *src, double timeout_sec, int strict, char **err) {
     *err = NULL;
     JS_UpdateStackTop(b->rt);
     b->interrupted = 0;
     b->deadline = now_s() + timeout_sec;
     size_t len = 0;
     char *out = NULL;
-    uint8_t *bc = compile(b, src, "<test>", 0, &len, err);
+    uint8_t *bc = compile_mode(b, src, "<script>", 0, strict, &len, err);
     if (bc) {
         JSValue obj = JS_ReadObject(b->ctx, bc, len, JS_READ_OBJ_BYTECODE);
         js_free_rt(b->rt, bc);
@@ -302,6 +317,16 @@ char *idj_eval_script(IDJBox *b, const char *src, double timeout_sec, char **err
     }
     b->deadline = 0;
     return out;
+}
+
+/// Like idj_eval_script but compiled in sloppy mode (Legado book-source scripts assign undeclared globals).
+/// Still runs in the eval-less sandbox context; the completion value of the script is returned as JSON.
+char *idj_eval_sloppy(IDJBox *b, const char *src, double timeout_sec, char **err) {
+    return eval_impl(b, src, timeout_sec, 0, err);
+}
+
+char *idj_eval_script(IDJBox *b, const char *src, double timeout_sec, char **err) {
+    return eval_impl(b, src, timeout_sec, 1, err);
 }
 
 size_t idj_memory_used(IDJBox *b) {

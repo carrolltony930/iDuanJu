@@ -44,7 +44,9 @@ targets:
         NSPhotoLibraryAddUsageDescription: 用于把你下载的图片和视频保存到相册
         LSApplicationQueriesSchemes: [tg]
         NSAppTransportSecurity:
-          NSAllowsLocalNetworking: true
+          # 「阅读」书源: many novel sites are http-only. (NSAllowsLocalNetworking must not be set alongside:
+          # iOS then ignores NSAllowsArbitraryLoads. Arbitrary loads already include the local proxy.)
+          NSAllowsArbitraryLoads: true
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
