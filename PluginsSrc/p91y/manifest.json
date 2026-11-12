@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "com.idj.p91y",
+  "name": "91PORNY 九色",
+  "version": "1.0.0",
+  "author": { "name": "carrolltony930" },
+  "description": "91porny.com（九色 / 91PORNY）：国产自拍视频 + 精品 + 蝌蚪，全站中文，详情页直接给 HLS 直链（index.m3u8），无第三方播放器、无人机验证。",
+  "type": "video",
+  "adult": true,
+  "language": ["zh"],
+  "minAppVersion": "1.5",
+  "entry": "main.js",
+  "permissions": {
+    "http": ["91porny.com", "*.91porny.com"],
+    "media": ["*.jiuse3.cloud", "*.jiuse.cloud", "*.ucloud165.xyz"],
+    "cloudflare": false,
+    "storage": true,
+    "login": false
+  },
+  "capabilities": ["home", "category", "search", "detail", "play"],
+  "settings": []
+}
