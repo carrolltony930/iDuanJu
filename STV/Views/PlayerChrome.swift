@@ -246,26 +246,64 @@ struct PlayerPill: View {
     }
 }
 
-/// 长按倍速提示：固定 2.0x，不再有任何调速/加速/减慢文案。
+/// 长按倍速提示（对齐 Telegram）：半透明灰胶囊 + 「2x」 + 会脉动的双三角快进标。
+/// 参考截图：文字 2 大 x 小写，右侧两颗实心三角交替呼吸，形成持续的「加速中」动感。
 struct PlayerSpeedHUD: View {
     var rate: Double
 
-    /// 参考常规播放器：深色胶囊 + 快进图标 +「2 倍速」，不带「播放中」。
     private var rateNumber: String {
         PlaybackCoordinator.formatRate(rate).replacingOccurrences(of: "x", with: "")
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 2) {
-            Text(rateNumber)
-                .font(.system(size: 12, weight: .heavy, design: .rounded).monospacedDigit())
-            Text("倍速")
-                .font(.system(size: 10, weight: .semibold))
+        HStack(spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(rateNumber)
+                    .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
+                Text("x")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+            }
+            .foregroundStyle(.white)
+            SpeedArrows()
+                .frame(width: 19, height: 13)
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(.black.opacity(0.58), in: Capsule())
+        .padding(.horizontal, 13)
+        .padding(.vertical, 5)
+        .background(.black.opacity(0.45), in: Capsule())
+    }
+}
+
+/// ⏩ 双实心三角：两颗透明度各自呼吸、相位错开，看上去像箭头在一下一下往前推。
+private struct SpeedArrows: View {
+    @State private var lit = false
+
+    var body: some View {
+        HStack(spacing: 1.5) {
+            ForEach(0..<2, id: \.self) { i in
+                ForwardTriangle()
+                    .fill(.white)
+                    .frame(width: 8, height: 12)
+                    .opacity(lit ? 1 : 0.38)
+                    .animation(
+                        .easeInOut(duration: 0.42)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(i) * 0.21),
+                        value: lit
+                    )
+            }
+        }
+        .onAppear { lit = true }
+    }
+}
+
+private struct ForwardTriangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.closeSubpath()
+        return p
     }
 }
 
