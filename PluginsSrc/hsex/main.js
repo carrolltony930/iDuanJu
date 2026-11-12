@@ -178,6 +178,8 @@ export default {
         headers: { 'Referer': SITE + '/', 'User-Agent': UA }
       });
     }
+    host.log('play ' + id + ' → ' + streams.length + ' 条线路');
+    for (const s of streams) host.log('  ' + s.name + ' ' + s.url);
     return { streams: streams };
   }
 };

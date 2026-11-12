@@ -224,6 +224,8 @@ export default {
       }
     }
     if (!streams.length) throw host.error('E_UNSUPPORTED', '没有可用的 https 播放地址');
+    host.log('play ' + id[0] + ' → ' + streams.length + ' 条线路');
+    for (const s of streams) host.log('  ' + s.name + ' ' + s.format + ' ' + s.url);
     return { streams: streams };
   }
 };
