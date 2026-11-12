@@ -1,0 +1,48 @@
+{
+ "manifest": {
+  "schema": 1,
+  "id": "com.idj.xchina",
+  "name": "小黄书 xChina",
+  "version": "1.0.0",
+  "author": {
+   "name": "carrolltony930"
+  },
+  "description": "xChina：最新 / 分类 / 搜索 + 官方 HLS 直链。单集长视频。",
+  "type": "video",
+  "adult": true,
+  "language": [
+   "zh"
+  ],
+  "minAppVersion": "1.5",
+  "entry": "main.js",
+  "permissions": {
+   "http": [
+    "xchina.co"
+   ],
+   "media": [
+    "*.xchina.download",
+    "*.xchina.io",
+    "xchina.co"
+   ],
+   "cloudflare": true,
+   "storage": false,
+   "login": false
+  },
+  "capabilities": [
+   "home",
+   "category",
+   "search",
+   "detail",
+   "play"
+  ],
+  "settings": [],
+  "integrity": {
+   "files": {
+    "main.js": "sha256-4CdX4ysKRD9cGxkzgybr9LxC9avg11Wicr0j0CpZ+WY="
+   }
+  }
+ },
+ "files": {
+  "main.js": "// 小黄书 xChina · i短剧 idj1 插件\n//\n// 站点是服务端渲染的 HTML（不是 SPA），但 Cloudflare 会按「请求指纹」拦非浏览器流量：\n// 只带 UA 会被 403，必须同时带 sec-ch-ua / Sec-Fetch-* 这组头（实测过）。\n// 播放地址在详情页的 #video-player[data-src] 里，是 /hls/{id}/master.m3u8。\n// 分页是路径式：/videos/new/2、/video-category/cn/2；搜索用 ?page=N。\n\nconst SITE = 'https://xchina.co';\n\nconst BROWSER_HEADERS = {\n  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',\n  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',\n  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',\n  'sec-ch-ua': '\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"',\n  'sec-ch-ua-mobile': '?0',\n  'sec-ch-ua-platform': '\"Windows\"',\n  'Sec-Fetch-Dest': 'document',\n  'Sec-Fetch-Mode': 'navigate',\n  'Sec-Fetch-Site': 'none',\n  'Sec-Fetch-User': '?1',\n  'Upgrade-Insecure-Requests': '1'\n};\n\n// 站点固定的 5 个视频分类（/categories 里确认过）\nconst CATEGORIES = [\n  { id: 'cat:cn', name: '国产' },\n  { id: 'cat:jav', name: '日本AV' },\n  { id: 'cat:movie', name: '电影' },\n  { id: 'cat:ai', name: 'AI视频' },\n  { id: 'cat:other', name: '其他' }\n];\n\nfunction clean(s) {\n  return String(s == null ? '' : s)\n    .replace(/<[^>]*>/g, '')\n    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/&nbsp;/g, ' ')\n    .trim();\n}\n\nasync function getHtml(path) {\n  const res = await host.http.request({ url: SITE + path, headers: BROWSER_HEADERS, timeout: 20000 });\n  const body = typeof res.body === 'string' ? res.body : '';\n  if (res.status === 403 || body.indexOf('Just a moment') >= 0 || body.indexOf('you have been blocked') >= 0) {\n    throw host.error('E_CF_REQUIRED', '站点拦截了请求（Cloudflare）');\n  }\n  if (res.status < 200 || res.status >= 300) throw host.error('E_HTTP', 'HTTP ' + res.status + ' ' + path);\n  return body;\n}\n\n// 列表页卡片：<a href=\"/video/{id}\" ...><img alt=\"标题\"> … </a>\nfunction parseCards(html) {\n  const out = [];\n  const seen = {};\n  const re = /<a[^>]+href=\"\\/video\\/([0-9a-f]{10,16})\"[^>]*>([\\s\\S]{0,1200}?)<\\/a>/g;\n  let m;\n  while ((m = re.exec(html)) !== null) {\n    const id = m[1];\n    if (seen[id]) continue;\n    const block = m[2];\n    let title = '';\n    const alt = block.match(/<img[^>]+alt=\"([^\"]*)\"/);\n    if (alt) title = clean(alt[1]);\n    if (!title) {\n      // 搜索/相关列表：标题在 span 里，取最长的文本段\n      const texts = block.match(/>([^<>]{4,120})</g) || [];\n      let best = '';\n      for (const t of texts) {\n        const v = clean(t.slice(1, -1));\n        if (v.length > best.length && !/^\\d+:\\d+$/.test(v)) best = v;\n      }\n      title = best;\n    }\n    if (!id || !title) continue;\n    seen[id] = 1;\n    const dur = block.match(/(\\d{1,3}:\\d{2})/);\n    out.push({\n      id: id,\n      title: title,\n      cover: 'https://r2.xchina.download/cover/' + id + '.webp',\n      remarks: dur ? dur[1] : ''\n    });\n  }\n  return out;\n}\n\nfunction pageResult(items, page) {\n  return { items: items, page: page, hasMore: items.length > 0 };\n}\n\nfunction pagePath(kind, slug, page) {\n  const n = Number(page || 1);\n  if (kind === 'new') return n <= 1 ? '/videos/new' : '/videos/new/' + n;\n  return n <= 1 ? '/video-category/' + slug : '/video-category/' + slug + '/' + n;\n}\n\nfunction videoId(input) {\n  const s = String((input && (input.episodeId || input.id)) || '');\n  const m = s.match(/[0-9a-f]{10,16}/);\n  return m ? m[0] : '';\n}\n\nexport default {\n  async home() {\n    const html = await getHtml(pagePath('new', '', 1));\n    return {\n      categories: [{ id: 'new', name: '最新' }].concat(CATEGORIES),\n      items: parseCards(html),\n      hasMore: true\n    };\n  },\n\n  async category(input) {\n    const id = String(input.id || 'new');\n    const page = Number(input.page || 1);\n    const slug = id.indexOf('cat:') === 0 ? id.slice(4) : '';\n    const html = await getHtml(slug ? pagePath('cat', slug, page) : pagePath('new', '', page));\n    return pageResult(parseCards(html), page);\n  },\n\n  async search(input) {\n    const kw = clean(input.keyword || '');\n    const page = Number(input.page || 1);\n    if (!kw) return { items: [], page: 1, hasMore: false };\n    const html = await getHtml('/search?q=' + encodeURIComponent(kw) + '&type=video&page=' + page);\n    return pageResult(parseCards(html), page);\n  },\n\n  async detail(input) {\n    const id = videoId(input);\n    if (!id) throw host.error('E_NOT_FOUND', '缺少视频 id');\n    const html = await getHtml('/video/' + id);\n    const src = html.match(/id=\"video-player\"[^>]*data-src=\"([^\"]+)\"/);\n    if (!src) throw host.error('E_PARSE', '详情页里没有播放地址');\n    const h1 = html.match(/<h1[^>]*>([\\s\\S]*?)<\\/h1>/);\n    const title = h1 ? clean(h1[1]) : id;\n    const poster = html.match(/data-poster=\"([^\"]+)\"/);\n    const dur = html.match(/时长\\s*([0-9:]+)/);\n    const tags = [];\n    const m = html.match(/<dt class=\"text-subtle\">系列<\\/dt>[\\s\\S]{0,300}?<\\/dd>/);\n    if (m) for (const t of m[0].match(/>([^<>]{2,12})</g) || []) {\n      const v = clean(t.slice(1, -1));\n      if (v && tags.indexOf(v) < 0) tags.push(v);\n    }\n    return {\n      title: title,\n      cover: poster ? poster[1] : 'https://r2.xchina.download/cover/' + id + '.webp',\n      desc: tags.join(' · '),\n      tags: tags,\n      lines: [{ name: '默认', episodes: [{ id: id, name: dur ? '时长 ' + dur[1] : title }] }]\n    };\n  },\n\n  async play(input) {\n    const id = videoId(input);\n    if (!id) throw host.error('E_NOT_FOUND', '缺少视频 id');\n    const url = SITE + '/hls/' + id + '/master.m3u8';\n    return {\n      streams: [{\n        name: '官方 HLS',\n        url: url,\n        format: 'hls',\n        headers: { 'Referer': SITE + '/' }\n      }]\n    };\n  }\n};\n"
+ }
+}
