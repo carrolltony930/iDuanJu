@@ -87,11 +87,12 @@ function pageResult(items, page) {
 }
 
 function categoryPath(id, page) {
+  // 分类页必须带尾部斜杠：
+  //   /categories/{hash}/      → 分类列表（不带斜杠会命中站点的兜底页，固定 92060 字节）
+  //   /categories/{hash}/{n}/  → 第 n 页
   if (id.indexOf('c-') === 0) {
-    // /categories/{hash}      第 1 页（带尾部斜杠会 404）
-    // /categories/{hash}/{n}  第 n 页
     const h = id.slice(2);
-    return '/categories/' + h + (page > 1 ? '/' + page : '');
+    return '/categories/' + h + '/' + (page > 1 ? page + '/' : '');
   }
   return '/' + id + '/' + (page > 1 ? page + '/' : '');
 }
