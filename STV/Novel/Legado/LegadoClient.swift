@@ -51,7 +51,7 @@ enum LegadoClient {
         ctx.page = page
         guard let url = s.searchUrl, !url.isEmpty else { return [] }
         let r = try LegadoURL.request(url, ctx: ctx, base: s.bookSourceUrl)
-        let resp = try LegadoHTTP.fetch(r.request, charset: r.charset)
+        let resp = try r.fetch()
         let base = resp.url.absoluteString
         let rules = s.ruleSearch ?? [:]
         let page = LegadoAnalyzer(resp.text, baseURL: base, ctx: ctx)
@@ -80,7 +80,7 @@ enum LegadoClient {
         let ctx = LegadoContext(source: s)
         ctx.book = ["bookUrl": bookURL]
         let r = try LegadoURL.request(bookURL, ctx: ctx, base: s.bookSourceUrl)
-        let resp = try LegadoHTTP.fetch(r.request, charset: r.charset)
+        let resp = try r.fetch()
         return try info(s, html: resp.text, url: resp.url.absoluteString, ctx: ctx, original: bookURL)
     }
 
@@ -109,7 +109,7 @@ enum LegadoClient {
             next.removeFirst()
             guard seen.insert(u).inserted else { continue }
             let r = try LegadoURL.request(u, ctx: ctx, base: s.bookSourceUrl)
-            let resp = try LegadoHTTP.fetch(r.request, charset: r.charset)
+            let resp = try r.fetch()
             let base = resp.url.absoluteString
             let page = LegadoAnalyzer(resp.text, baseURL: base, ctx: ctx)
             for el in try page.elements(rules["chapterList"] ?? "") {
@@ -140,7 +140,7 @@ enum LegadoClient {
         var seen = Set<String>()
         while let u = url, seen.count < 30, seen.insert(u).inserted {
             let r = try LegadoURL.request(u, ctx: ctx, base: s.bookSourceUrl)
-            let resp = try LegadoHTTP.fetch(r.request, charset: r.charset)
+            let resp = try r.fetch()
             let base = resp.url.absoluteString
             let a = LegadoAnalyzer(resp.text, baseURL: base, ctx: ctx)
             parts.append(try a.strings(rules["content"] ?? "").joined(separator: "\n"))

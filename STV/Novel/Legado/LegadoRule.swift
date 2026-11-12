@@ -1,12 +1,50 @@
 import Foundation
+import CommonCrypto
+import Compression
+import CryptoKit
 
 /// Regex "all in one" match (`:regex` list rules): group texts, `$0` = whole match.
 struct LegadoGroups { var groups: [String] }
 
 /// State shared by one operation (search / 详情 / 目录 / 正文): variables from `@put`, the book, the JS engine.
+/// `java.put` / `java.get` variables, persisted like Legado's book / source variables.
+enum LegadoVars {
+    private static let lock = NSLock()
+    private static let key = "stv.legado.vars"
+    nonisolated(unsafe) private static var cache: [String: [String: String]]?
+
+    private static func load() -> [String: [String: String]] {
+        if let c = cache { return c }
+        let c = (UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]]) ?? [:]
+        cache = c
+        return c
+    }
+    static func get(_ scope: String, _ k: String) -> String? { lock.lock(); defer { lock.unlock() }; return load()[scope]?[k] }
+    static func put(_ scope: String, _ k: String, _ v: String) {
+        lock.lock(); defer { lock.unlock() }
+        var all = load()
+        all[scope, default: [:]][k] = v
+        cache = all
+        UserDefaults.standard.set(all, forKey: key)
+    }
+}
+
 final class LegadoContext {
     let source: LegadoSource
+    /// Operation-local values (`@put` inside one rule run) — `java.put` also persists them.
     var vars: [String: String] = [:]
+    private var inHeaders = false
+    private var sourceScope: String { "s|" + source.bookSourceUrl }
+    private var bookScope: String? { (book["bookUrl"] as? String).flatMap { $0.isEmpty ? nil : "b|" + source.bookSourceUrl + "|" + $0 } }
+
+    func putVar(_ k: String, _ v: String) {
+        vars[k] = v
+        LegadoVars.put(bookScope ?? sourceScope, k, v)
+    }
+
+    func getVar(_ k: String) -> String {
+        vars[k] ?? bookScope.flatMap { LegadoVars.get($0, k) } ?? LegadoVars.get(sourceScope, k) ?? ""
+    }
     var book: [String: Any] = [:]
     var chapter: [String: Any]?
     var key: String?
@@ -30,15 +68,15 @@ final class LegadoContext {
         switch name {
         case "ajax":
             let r = try LegadoURL.request(s("url"), ctx: self, base: source.bookSourceUrl)
-            return try LegadoHTTP.fetch(r.request, charset: r.charset).text
+            return try r.fetch().text
         case "connect":
             var r = try LegadoURL.request(s("url"), ctx: self, base: source.bookSourceUrl)
             if let m = a["method"] as? String { r.request.httpMethod = m; r.request.httpBody = Data(s("body").utf8) }
             if let h = a["headers"] as? [String: Any] { for (k, v) in h { r.request.setValue("\(v)", forHTTPHeaderField: k) } }
-            let resp = try LegadoHTTP.fetch(r.request, charset: r.charset)
+            let resp = try r.fetch()
             return ["body": resp.text, "status": resp.status, "url": resp.url.absoluteString, "headers": resp.headers]
-        case "putVar": vars[s("k")] = s("v"); return nil
-        case "getVar": return vars[s("k")] ?? ""
+        case "putVar": putVar(s("k"), s("v")); return nil
+        case "getVar": return getVar(s("k"))
         case "getString", "getStringList":
             guard let cur = stack.last else { return name == "getString" ? "" : [] }
             let an = a["content"] is String ? LegadoAnalyzer(s("content"), baseURL: cur.baseURL, ctx: self) : cur
@@ -57,6 +95,43 @@ final class LegadoContext {
         case "encodeURI": return LegadoHTTP.percentEncode(s("s"), charset: a["cs"] as? String)
         case "htmlFormat": return LegadoContent.text(fromHTML: s("s"))
         case "log": log.append(s("s")); return nil
+            // Byte arrays travel as JSON number arrays (signed, like Java byte[]).
+        case "bytes.enc": return LegadoBytes.json(s("s").data(using: LegadoHTTP.encoding(a["cs"] as? String) ?? .utf8) ?? Data())
+        case "bytes.dec":
+            let d = LegadoBytes.data(a["b"])
+            return String(data: d, encoding: LegadoHTTP.encoding(a["cs"] as? String) ?? .utf8) ?? String(decoding: d, as: UTF8.self)
+        case "b64.dec":
+            var t = s("s").replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            t = t.filter { !$0.isWhitespace }
+            while t.count % 4 != 0 { t += "=" }
+            return LegadoBytes.json(Data(base64Encoded: t) ?? Data())
+        case "b64.enc": return LegadoBytes.data(a["b"]).base64EncodedString()
+        case "hex.dec":
+            let h = Array(s("s").utf8)
+            var d = Data()
+            var i = 0
+            while i + 1 < h.count { if let v = UInt8(String(decoding: h[i...i + 1], as: UTF8.self), radix: 16) { d.append(v) }; i += 2 }
+            return LegadoBytes.json(d)
+        case "hex.enc": return LegadoBytes.data(a["b"]).map { String(format: "%02x", $0) }.joined()
+        case "digest":
+            let d = LegadoBytes.data(a["b"])
+            switch s("alg").uppercased().replacingOccurrences(of: "-", with: "") {
+            case "SHA1": return LegadoBytes.json(Data(Insecure.SHA1.hash(data: d)))
+            case "SHA256": return LegadoBytes.json(Data(SHA256.hash(data: d)))
+            case "SHA512": return LegadoBytes.json(Data(SHA512.hash(data: d)))
+            default: return LegadoBytes.json(Data(Insecure.MD5.hash(data: d)))
+            }
+        case "cipher":
+            return LegadoBytes.json(try LegadoBytes.cipher(s("t"), encrypt: (a["mode"] as? Int) == 1, key: LegadoBytes.data(a["key"]),
+                    iv: a["iv"].map(LegadoBytes.data), data: LegadoBytes.data(a["b"])))
+        case "inflate": return LegadoBytes.json(try LegadoBytes.inflate(LegadoBytes.data(a["b"]), raw: a["nowrap"] as? Bool ?? false))
+        case "ua": return LegadoHTTP.userAgent
+        case "headers":
+            // Guard against a header script that itself calls getHeaderMap().
+            if inHeaders { return [:] }
+            inHeaders = true; defer { inHeaders = false }
+            return (try? LegadoURL.headers(ctx: self)) ?? [:]
+        case "androidId": return String(LegadoJS.md5(source.bookSourceUrl).prefix(16))
         case "cookie":
             guard let u = URL(string: s("url")) else { return "" }
             let cs = HTTPCookieStorage.shared.cookies(for: u) ?? []
@@ -111,7 +186,7 @@ final class LegadoAnalyzer {
         var cur: Any = content
         for seg in Self.jsSegments(rule) {
             switch seg {
-            case .js(let code): cur = try ctx.evalJS(code, result: cur, baseURL: baseURL) ?? NSNull()
+            case .js(let code): cur = try ctx.evalJS(try fillJS(code), result: cur, baseURL: baseURL) ?? NSNull()
             case .rule(let r):
                 let target = LegadoAnalyzer(cur, baseURL: baseURL, ctx: ctx)
                 cur = try target.listCombined(r)
@@ -131,7 +206,7 @@ final class LegadoAnalyzer {
         guard !rule.isEmpty else { return [] }
         // A rule that is only `@get:{k}` is the stored value itself.
         if let m = rule.range(of: #"^@get:\{([^}]+)\}$"#, options: .regularExpression) {
-            return [ctx.vars[String(rule[m].dropFirst(6).dropLast())] ?? ""]
+            return [ctx.getVar(String(rule[m].dropFirst(6).dropLast()))]
         }
         ctx.stack.append(self); defer { ctx.stack.removeLast() }
         rule = try applyPutGet(rule)
@@ -139,7 +214,7 @@ final class LegadoAnalyzer {
         var touched = false
         for seg in Self.jsSegments(rule) {
             switch seg {
-            case .js(let code): cur = try ctx.evalJS(code, result: touched ? cur : Self.textOf(cur), baseURL: baseURL) ?? ""
+            case .js(let code): cur = try ctx.evalJS(try fillJS(code), result: touched ? cur : Self.textOf(cur), baseURL: baseURL) ?? ""
             case .rule(let r):
                 let target = LegadoAnalyzer(cur, baseURL: baseURL, ctx: ctx)
                 cur = try target.stringsCombined(r)
@@ -171,7 +246,11 @@ final class LegadoAnalyzer {
     }
 
     private func stringsCombined(_ rule: String) throws -> [String] {
-        if Self.isTemplate(rule) { return [try template(rule)] }
+        if Self.isTemplate(rule) {
+            let (main, regex, repl, firstOnly) = Self.splitReplace(rule)
+            let t = try template(main)
+            return [regex.map { Self.replace(t, $0, repl, firstOnly: firstOnly) } ?? t]
+        }
         let (parts, op) = Self.splitTop(rule)
         var results: [[String]] = []
         for p in parts {
@@ -248,7 +327,8 @@ final class LegadoAnalyzer {
     }
 
     private func stringsSingle(_ r0: String) throws -> [String] {
-        let (r, regex, repl, firstOnly) = Self.splitReplace(r0)
+        let (r1, regex, repl, firstOnly) = Self.splitReplace(r0)
+        let r = r1.trimmingCharacters(in: .whitespacesAndNewlines)
         var out: [String]
         if let g = content as? LegadoGroups {
             out = [Self.groupRef(r, g)]
@@ -271,6 +351,7 @@ final class LegadoAnalyzer {
                 out = Self.values(doc.css(sel), attr ?? "text")
             case .jsoup:
                 var segs = Self.splitAt(rule)
+                guard !segs.isEmpty else { out = [Self.textOf(content)]; break }
                 let attr = segs.count > 1 || Self.attributeNames.contains(segs[0]) ? segs.removeLast() : "text"
                 var nodes = [doc]
                 for seg in segs { nodes = Self.select(seg, nodes) }
@@ -300,6 +381,21 @@ final class LegadoAnalyzer {
         return out + rest
     }
 
+    /// `{{rule}}` inside `<js>` / `@js:` code is replaced with the value from the current item before running.
+    private func fillJS(_ code: String) throws -> String {
+        guard code.contains("{{") else { return code }
+        var out = "", rest = Substring(code)
+        while let open = rest.range(of: "{{"), let close = rest.range(of: "}}", range: open.upperBound..<rest.endIndex) {
+            out += rest[..<open.lowerBound]
+            let inner = String(rest[open.upperBound..<close.lowerBound])
+            let ruleLike = inner.hasPrefix("@@") || inner.hasPrefix("@css:") || inner.lowercased().hasPrefix("@xpath:") || inner.hasPrefix("@json:")
+            || inner.hasPrefix("$.") || inner.hasPrefix("//")
+            out += ruleLike ? try string(inner) : "{{" + inner + "}}"
+            rest = rest[close.upperBound...]
+        }
+        return out + rest
+    }
+
     private func jsonTemplate(_ r: String) -> String {
         guard let j = json, let re = try? NSRegularExpression(pattern: #"\{(\$\.[^{}]+)\}"#) else { return r }
         var out = r
@@ -317,12 +413,12 @@ final class LegadoAnalyzer {
             let body = "{" + r[p.upperBound..<end.lowerBound] + "}"
             r.removeSubrange(p.lowerBound..<end.upperBound)
             if let d = body.data(using: .utf8), let m = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] {
-                for (k, v) in m { ctx.vars[k] = try string("\(v)") }
+                for (k, v) in m { ctx.putVar(k, try string("\(v)")) }
             }
         }
         while let g = r.range(of: "@get:{"), let end = r.range(of: "}", range: g.upperBound..<r.endIndex) {
             let k = String(r[g.upperBound..<end.lowerBound])
-            r.replaceSubrange(g.lowerBound..<end.upperBound, with: ctx.vars[k] ?? "")
+            r.replaceSubrange(g.lowerBound..<end.upperBound, with: ctx.getVar(k))
         }
         return r
     }
@@ -432,24 +528,10 @@ final class LegadoAnalyzer {
             case "id.": found = p.descendants.filter { $0.attr("id") == name }
             case "tag.": found = p.descendants.filter { $0.name == name.lowercased() }
             case "text.": found = p.descendants.filter { $0.ownText.contains(name) }
-            default: found = cssWithEq(name, p)
+            default: found = p.css(name)
             }
             return pick(found, index)
         }
-    }
-
-    /// Jsoup pseudo `:eq(n)` / `:lt(n)` / `:gt(n)` at the end of a selector.
-    private static func cssWithEq(_ sel: String, _ p: LegadoNode) -> [LegadoNode] {
-        if let m = sel.range(of: #":(eq|lt|gt)\((-?\d+)\)$"#, options: .regularExpression) {
-            let base = String(sel[..<m.lowerBound])
-            let spec = sel[m]
-            let n = Int(spec.filter { $0.isNumber || $0 == "-" }) ?? 0
-            let all = p.css(base)
-            if spec.hasPrefix(":eq") { let k = n < 0 ? all.count + n : n; return all.indices.contains(k) ? [all[k]] : [] }
-            if spec.hasPrefix(":lt") { return Array(all.prefix(max(0, n))) }
-            return Array(all.dropFirst(n + 1))
-        }
-        return p.css(sel)
     }
 
     /// Legado indexes: `0`, `-1`, `1,3`, `1:3` (inclusive), `!0` (exclude).
@@ -497,7 +579,8 @@ final class LegadoAnalyzer {
                 out.append(.js(String(rest[a.upperBound...])))
                 rest = ""
             } else {
-                out.append(.rule(String(rest)))
+                let r = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !r.isEmpty { out.append(.rule(r)) }
                 rest = ""
             }
         }
@@ -570,6 +653,14 @@ final class LegadoAnalyzer {
 struct LegadoRequest {
     var request: URLRequest
     var charset: String?
+    /// Legado `type` option: the rule gets the raw body as hex instead of text.
+    var type: String?
+
+    func fetch() throws -> LegadoResponse {
+        var r = try LegadoHTTP.fetch(request, charset: charset)
+        if let type, !type.isEmpty { r.text = r.body.map { String(format: "%02x", $0) }.joined() }
+        return r
+    }
 }
 
 enum LegadoURL {
@@ -629,7 +720,7 @@ enum LegadoURL {
             }
             req.httpBody = isJSON ? Data(body.utf8) : (body.data(using: LegadoHTTP.encoding(charset) ?? .utf8) ?? Data(body.utf8))
         }
-        return LegadoRequest(request: req, charset: charset)
+        return LegadoRequest(request: req, charset: charset, type: options["type"] as? String)
     }
 
     /// Replaces `{{key}}`, `{{page}}` and `{{js expression}}`; the keyword is percent-encoded in `charset`.
@@ -673,5 +764,64 @@ enum LegadoURL {
         }
         guard let d = h.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return [:] }
         return o.mapValues { "\($0)" }
+    }
+}
+
+
+/// Java byte[] ⇄ Data, and the crypto / zip primitives behind the Rhino compatibility layer.
+enum LegadoBytes {
+    static func json(_ d: Data) -> [Int] { d.map { Int(Int8(bitPattern: $0)) } }
+
+    static func data(_ v: Any?) -> Data {
+        guard let a = v as? [Any] else { return (v as? String).map { Data($0.utf8) } ?? Data() }
+        return Data(a.map { UInt8(truncatingIfNeeded: ($0 as? Int) ?? Int(($0 as? Double) ?? 0)) })
+    }
+
+    /// "AES/CBC/PKCS5Padding", "AES/ECB/NoPadding", "DES/…", "DESede/…".
+    static func cipher(_ transformation: String, encrypt: Bool, key: Data, iv: Data?, data: Data) throws -> Data {
+        let parts = transformation.uppercased().split(separator: "/").map(String.init)
+        let alg = parts.first ?? "AES"
+        let mode = parts.count > 1 ? parts[1] : "ECB"
+        let padding = parts.count > 2 ? parts[2] : "PKCS5PADDING"
+        let (algorithm, block): (CCAlgorithm, Int) = alg.hasPrefix("DESEDE") || alg == "3DES" ? (CCAlgorithm(kCCAlgorithm3DES), kCCBlockSize3DES)
+        : alg.hasPrefix("DES") ? (CCAlgorithm(kCCAlgorithmDES), kCCBlockSizeDES) : (CCAlgorithm(kCCAlgorithmAES), kCCBlockSizeAES128)
+        var options = CCOptions(0)
+        if padding != "NOPADDING" { options |= CCOptions(kCCOptionPKCS7Padding) }
+        if mode == "ECB" { options |= CCOptions(kCCOptionECBMode) }
+        var out = Data(count: data.count + block)
+        var moved = 0
+        let ivData = mode == "ECB" ? nil : iv
+        let status = out.withUnsafeMutableBytes { o in data.withUnsafeBytes { i in key.withUnsafeBytes { k in (ivData ?? Data()).withUnsafeBytes { v in
+                        CCCrypt(CCOperation(encrypt ? kCCEncrypt : kCCDecrypt), algorithm, options, k.baseAddress, key.count,
+                            ivData == nil ? nil : v.baseAddress, i.baseAddress, data.count, o.baseAddress, o.count, &moved)
+                    } } } }
+        guard status == kCCSuccess else { throw LegadoError.rule("解密失败（\(transformation)）") }
+        return out.prefix(moved)
+    }
+
+    /// Raw deflate (Inflater(true)) or zlib-wrapped (header + adler32 trailer).
+    static func inflate(_ d: Data, raw: Bool) throws -> Data {
+        var src = d
+        if !raw, src.count > 6 { src = src.subdata(in: 2..<(src.count - 4)) }
+        var out = Data()
+        let capacity = 64 * 1024
+        let dst = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
+        defer { dst.deallocate() }
+        var stream = compression_stream(dst_ptr: dst, dst_size: capacity, src_ptr: dst, src_size: 0, state: nil)
+        guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else { throw LegadoError.rule("解压失败") }
+        defer { compression_stream_destroy(&stream) }
+        try src.withUnsafeBytes { (b: UnsafeRawBufferPointer) in
+            stream.src_ptr = b.bindMemory(to: UInt8.self).baseAddress!
+            stream.src_size = src.count
+            while true {
+                stream.dst_ptr = dst
+                stream.dst_size = capacity
+                let st = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+                out.append(dst, count: capacity - stream.dst_size)
+                if st == COMPRESSION_STATUS_END { break }
+                guard st == COMPRESSION_STATUS_OK else { throw LegadoError.rule("解压失败") }
+            }
+        }
+        return out
     }
 }

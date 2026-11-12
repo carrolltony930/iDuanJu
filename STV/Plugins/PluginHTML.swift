@@ -112,6 +112,21 @@ enum CSSXPath {
                     if t != "*" { all.insert("self::\(t)", at: 0) }
                     preds.append("not(" + (all.isEmpty ? "false()" : all.map { "(\($0))" }.joined(separator: " and ")) + ")")
                 case "contains": preds.append("contains(string(.), \(literal(unquote(arg))))")
+                // jsoup extras (Legado book sources use them)
+                case "containsown": preds.append("text()[contains(., \(literal(unquote(arg))))]")
+                case "has":
+                    let inner = try one(arg.trimmingCharacters(in: .whitespaces).hasPrefix(">") ? String(arg.trimmingCharacters(in: .whitespaces).dropFirst()) : arg)
+                    preds.append(arg.trimmingCharacters(in: .whitespaces).hasPrefix(">") ? "./" + inner.dropFirst(3) : inner)
+                case "first-of-type": preds.append(tag == "*" ? "not(preceding-sibling::*)" : "not(preceding-sibling::\(tag))")
+                case "last-of-type": preds.append(tag == "*" ? "not(following-sibling::*)" : "not(following-sibling::\(tag))")
+                case "nth-of-type":
+                    guard let n = Int(arg.trimmingCharacters(in: .whitespaces)), n > 0 else { throw Bad(message: ":nth-of-type 只支持数字") }
+                    preds.append("count(preceding-sibling::\(tag == "*" ? "*" : tag)) = \(n - 1)")
+                // jsoup :eq / :lt / :gt compare the element's index among its siblings (0-based).
+                case "eq", "lt", "gt":
+                    guard let n = Int(arg.trimmingCharacters(in: .whitespaces)) else { throw Bad(message: ":\(name) 只支持数字") }
+                    let op = name == "eq" ? "=" : name == "lt" ? "<" : ">"
+                    preds.append(n < 0 && name == "eq" ? "count(following-sibling::*) = \(-n - 1)" : "count(preceding-sibling::*) \(op) \(n)")
                 default: throw Bad(message: "不支持的伪类 :\(name)")
                 }
             default: throw Bad(message: "无法解析选择器：\(s)")

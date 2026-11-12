@@ -25,6 +25,7 @@ enum LegadoJSONPath {
                 }
             } else if p[i] == "." {
                 i = p.index(after: i)
+                if i < p.endIndex, p[i] == "[" { continue }   // `$.[*]` = `$[*]`
                 let (name, next) = ident(p, i)
                 cur = name == "*" ? cur.flatMap(children) : cur.compactMap { ($0 as? [String: Any])?[name] }
                 i = next

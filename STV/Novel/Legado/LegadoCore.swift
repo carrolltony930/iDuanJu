@@ -140,6 +140,15 @@ enum LegadoHTTP {
 
     /// Synchronous request (book-source rules run on a worker thread).
     static func fetch(_ req0: URLRequest, charset: String? = nil) throws -> LegadoResponse {
+        // `data:` URLs (API sources pack ids into them) answer locally, like Legado.
+        if let u = req0.url, u.scheme == "data" {
+            let raw = u.absoluteString.dropFirst(5)
+            guard let comma = raw.firstIndex(of: ",") else { throw LegadoError.rule("data 网址无效") }
+            let meta = raw[..<comma], payload = String(raw[raw.index(after: comma)...])
+            let body = meta.hasSuffix(";base64") ? (Data(base64Encoded: payload.removingPercentEncoding ?? payload) ?? Data())
+            : Data((payload.removingPercentEncoding ?? payload).utf8)
+            return LegadoResponse(url: u, status: 200, headers: [:], body: body, text: decode(body, contentType: nil, charset: charset))
+        }
         var req = req0
         if req.value(forHTTPHeaderField: "User-Agent") == nil { req.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
         if req.timeoutInterval > 20 || req.timeoutInterval <= 0 { req.timeoutInterval = 15 }
@@ -232,9 +241,87 @@ final class LegadoJS {
                 getCookie: (u, k) => call('cookie', { url: str(u), k: k == null ? null : str(k) }),
             };
             globalThis.cookie = { getCookie: (u) => java.getCookie(u), getKey: (u, k) => java.getCookie(u, k), removeCookie: () => {} };
-            globalThis.__legado_call = call;
-    })(__host);
-    """#
+            // ---- Rhino / Android compatibility (only what book sources actually use) ----
+            const bytesOf = (v) => Array.isArray(v) ? v : call('bytes.enc', { s: str(v), cs: 'UTF-8' });
+            function JString(a, b, c, d) {
+                let s;
+                if (a == null || typeof a !== 'object' || !Array.isArray(a)) s = str(a);
+                else if (typeof b === 'number') s = call('bytes.dec', { b: a.slice(b, b + c), cs: d || 'UTF-8' });
+                else s = call('bytes.dec', { b: a, cs: b || 'UTF-8' });
+                return { toString: () => s, valueOf: () => s, getBytes: (cs) => call('bytes.enc', { s, cs: cs || 'UTF-8' }), length: () => s.length };
+            }
+            const Arrays = {
+                copyOf: (a, n) => { const r = a.slice(0, n); while (r.length < n) r.push(0); return r; },
+                copyOfRange: (a, from, to) => { const r = a.slice(from, to); while (r.length < to - from) r.push(0); return r; },
+                toString: (a) => '[' + a.join(', ') + ']',
+            };
+            const Base64 = {
+                getDecoder: () => ({ decode: (v) => call('b64.dec', { s: Array.isArray(v) ? call('bytes.dec', { b: v, cs: 'UTF-8' }) : str(v) }) }),
+                getMimeDecoder: () => Base64.getDecoder(),
+                getUrlDecoder: () => Base64.getDecoder(),
+                getEncoder: () => ({ encodeToString: (b) => call('b64.enc', { b: bytesOf(b) }), encode: (b) => call('bytes.enc', { s: call('b64.enc', { b: bytesOf(b) }), cs: 'UTF-8' }) }),
+            };
+            function Inflater(nowrap) {
+                let input = [];
+                return {
+                    setInput: (b, off, len) => { off = off || 0; input = b.slice(off, len == null ? b.length : off + len); },
+                    inflate: (out, off, len) => { const r = call('inflate', { b: input, nowrap: !!nowrap }); off = off || 0; const n = Math.min(r.length, len == null ? out.length - off : len); for (let i = 0; i < n; i++) out[off + i] = r[i]; return n; },
+                    end: () => {}, finished: () => true,
+                };
+            }
+            const MessageDigest = { getInstance: (alg) => { let acc = []; return {
+                        update: (b) => { acc = acc.concat(bytesOf(b)); },
+                        digest: (b) => { const all = b === undefined ? acc : acc.concat(bytesOf(b)); acc = []; return call('digest', { alg: str(alg), b: all }); },
+                    }; } };
+            const Cipher = { getInstance: (t) => { let mode = 2, key = null, iv = null; return {
+                        init: (m, k, p) => { mode = m; key = k; iv = p || null; },
+                        doFinal: (b) => call('cipher', { t: str(t), mode, key: key.key, iv: iv ? iv.iv : null, b: bytesOf(b) }),
+                    }; }, ENCRYPT_MODE: 1, DECRYPT_MODE: 2 };
+            function SecretKeySpec(k, alg) { return { key: bytesOf(k), alg: str(alg) }; }
+            function IvParameterSpec(v) { return { iv: bytesOf(v) }; }
+            // Rhino scope helpers: `this.getHeaderMap()` (the request headers) and login state (not supported → empty).
+            globalThis.getHeaderMap = () => call('headers', null);
+            globalThis.getSource = () => globalThis.source;
+                globalThis.Packages = {
+                    java: { lang: { String: JString, Thread: { sleep: () => {} } }, util: { Arrays, Base64, zip: { Inflater } }, security: { MessageDigest } },
+                    javax: { crypto: { Cipher, spec: { SecretKeySpec, IvParameterSpec } } },
+                    cn: { hutool: { crypto: { digest: { DigestUtil: { md5Hex: (s) => java.md5Encode(s) } } } } },
+                };
+                const sym = (t, key, iv) => {
+                    const k = bytesOf(key), v = iv == null ? null : bytesOf(iv), tt = str(t);
+                    const run = (mode, data) => call('cipher', { t: tt, mode, key: k, iv: v, b: data });
+                    const input = (d) => Array.isArray(d) ? d : (/^[0-9a-fA-F]+$/.test(str(d)) && str(d).length % 2 === 0 ? call('hex.dec', { s: str(d) }) : call('b64.dec', { s: str(d) }));
+                    return {
+                        decrypt: (d) => run(2, input(d)),
+                        decryptStr: (d) => call('bytes.dec', { b: run(2, input(d)), cs: 'UTF-8' }),
+                        encrypt: (d) => run(1, bytesOf(d)),
+                        encryptBase64: (d) => call('b64.enc', { b: run(1, bytesOf(d)) }),
+                        encryptHex: (d) => call('hex.enc', { b: run(1, bytesOf(d)) }),
+                    };
+                };
+                Object.assign(globalThis.java, {
+                        createSymmetricCrypto: sym,
+                        aesBase64DecodeToString: (d, k, t, iv) => sym(t, k, iv).decryptStr(d),
+                        aesDecodeToString: (d, k, t, iv) => sym(t, k, iv).decryptStr(d),
+                        aesEncodeToBase64String: (d, k, t, iv) => sym(t, k, iv).encryptBase64(d),
+                        hexDecodeToString: (s) => call('bytes.dec', { b: call('hex.dec', { s: str(s) }), cs: 'UTF-8' }),
+                        hexEncodeToString: (s) => call('hex.enc', { b: bytesOf(s) }),
+                        base64DecodeToByteArray: (s) => call('b64.dec', { s: str(s) }),
+                        strToBytes: (s, cs) => call('bytes.enc', { s: str(s), cs: cs || 'UTF-8' }),
+                        bytesToStr: (b, cs) => call('bytes.dec', { b, cs: cs || 'UTF-8' }),
+                        getWebViewUA: () => call('ua', {}),
+                        androidId: () => call('androidId', {}),
+                        ajaxAll: (urls) => (urls || []).map((u) => { try { const r = call('connect', { url: str(u) }); return { body: () => r.body, code: () => r.status, url: () => r.url }; } catch (e) { return { body: () => '', code: () => 500, url: () => str(u) }; } }),
+                        startBrowser: () => { throw new Error('需要内置浏览器（暂不支持）'); },
+                        startBrowserAwait: () => { throw new Error('需要内置浏览器（暂不支持）'); },
+                        showBrowser: () => { throw new Error('需要内置浏览器（暂不支持）'); },
+                        getVerificationCode: () => { throw new Error('需要输入验证码（暂不支持）'); },
+                        openUrl: () => {}, open: () => {}, getThemeConfig: () => ({}),
+                });
+
+                globalThis.__legado_call = call;
+        })(__host);
+"""#
 
     func eval(_ code: String, _ bindings: [String: Any]) throws -> Any? {
         let box = idj_new(32 << 20, 1 << 20, legadoHostCallback, Unmanaged.passUnretained(self).toOpaque())
@@ -251,9 +338,19 @@ final class LegadoJS {
             header += "var \(k) = \(json)[0];\n"
         }
         // `book` / `source` / `chapter` objects also answer Legado's getter style (book.getVariable, source.getKey()).
-        header += "if (typeof source === 'object' && source) { source.getKey = () => source.bookSourceUrl; source.getVariable = () => ''; }\n"
+        header += "if (typeof source === 'object' && source) { source.getKey = () => source.bookSourceUrl; source.getVariable = () => java.get('__sourceVariable'); source.setVariable = (v) => java.put('__sourceVariable', String(v)); source.getLoginHeader = () => ''; source.getLoginHeaderMap = () => ({}); source.getLoginInfo = () => ''; source.getLoginInfoMap = () => ({}); source.putLoginHeader = () => {}; source.putLoginInfo = () => false; source.removeLoginHeader = () => {}; source.get = (k) => java.get(k); source.put = (k, v) => java.put(k, v); }\n"
         header += "if (typeof book === 'object' && book) { book.getVariable = () => ''; }\n"
-        let src = header + (jsLib.map { $0 + "\n" } ?? "") + code
+        // jsLib and the snippet run as separate scripts (separate scopes in Legado). Top-level `let` / `const` become
+        // `var` so names declared in both, or by two snippets, do not clash in the shared global scope.
+        if let lib = jsLib, !lib.isEmpty {
+            guard let r = idj_eval_sloppy(box, header + Self.relaxed(lib), 8, &err) else {
+                defer { if let err { idj_str_free(err) } }
+                throw LegadoError.rule("jsLib：" + Self.message(err))
+            }
+            idj_str_free(r)
+            header = ""
+        }
+        let src = header + Self.relaxed(code)
         guard let r = idj_eval_sloppy(box, src, 8, &err) else {
             defer { if let err { idj_str_free(err) } }
             let msg = err.map { String(cString: $0) } ?? "unknown"
@@ -262,6 +359,15 @@ final class LegadoJS {
         }
         defer { idj_str_free(r) }
         return try? JSONSerialization.jsonObject(with: Data(String(cString: r).utf8), options: [.fragmentsAllowed])
+    }
+
+    static func relaxed(_ js: String) -> String {
+        js.replacingOccurrences(of: #"(?m)^(\s{0,4})(?:let|const)(\s+[A-Za-z_$])"#, with: "$1var$2", options: .regularExpression)
+    }
+
+    static func message(_ err: UnsafeMutablePointer<CChar>?) -> String {
+        let msg = err.map { String(cString: $0) } ?? "unknown"
+        return (try? JSONSerialization.jsonObject(with: Data(msg.utf8)) as? [String: Any])?["message"] as? String ?? msg
     }
 
     // Helpers used by the handler.

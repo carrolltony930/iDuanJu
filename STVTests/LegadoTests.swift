@@ -137,7 +137,11 @@ final class LegadoTests: XCTestCase {
         XCTAssertEqual(try a.strings("tag.li[1:2]@text"), ["2", "3"])
         XCTAssertEqual(try a.strings("tag.li[0,2]@text"), ["1", "3"])
         XCTAssertEqual(try a.strings("class.c a@text"), ["1"], "multiple classes")
-        XCTAssertEqual(try a.strings("li.c:eq(1)@text"), ["2"], "css segment with :eq")
+        XCTAssertEqual(try a.strings("li.c:eq(1)@text"), ["2"], "css segment with :eq (sibling index)")
+        XCTAssertEqual(try a.strings("@css:ul li:has(b)@text"), ["4 x"], ":has")
+        XCTAssertEqual(try a.strings("@css:li:last-of-type@ownText"), ["4"])
+        XCTAssertEqual(try a.strings("@css:li:containsOwn(3)@text"), ["3"])
+        XCTAssertEqual(try a.strings("@css:li:gt(1)@text"), ["3", "4 x"])
         XCTAssertEqual(try a.elements("tag.ul@children").count, 4)
         XCTAssertEqual(try a.string("tag.li.0@text&&tag.li.1@text"), "1\n2")
         XCTAssertEqual(try a.string("tag.p@text||tag.li.2@text"), "3")
@@ -151,6 +155,12 @@ final class LegadoTests: XCTestCase {
         XCTAssertEqual(try a.string("id.n@text##书名：(.*)##《$1》###"), "《雾港》", "### keeps the first match, replaced")
             _ = try a.string("@put:{\"bid\":\"id.n@data-id\"}id.n@text")
             XCTAssertEqual(try a.string("@get:{bid}"), "42")
+            // `@put` at the end of a rule (七猫: `title@put:{"bid":"$.id"}`), visible to a later operation on the same book.
+            let ctx1 = LegadoContext(source: htmlSource); ctx1.book = ["bookUrl": "https://x.test/b/9"]
+            let j = LegadoAnalyzer(["title": "雾港", "id": 9] as [String: Any], baseURL: "", ctx: ctx1)
+            XCTAssertEqual(try j.string("title@put:{\"bid\":\"$.id\"}"), "雾港")
+            let ctx2 = LegadoContext(source: htmlSource); ctx2.book = ["bookUrl": "https://x.test/b/9"]
+            XCTAssertEqual(try LegadoAnalyzer("", baseURL: "", ctx: ctx2).string("@js:java.get('bid')"), "9")
             let list = LegadoAnalyzer("a=1;b=2;", baseURL: "", ctx: LegadoContext(source: htmlSource))
             let items = try list.elements(":(\\w)=(\\d);")
             XCTAssertEqual(items.count, 2)
@@ -167,6 +177,7 @@ final class LegadoTests: XCTestCase {
             XCTAssertEqual(LegadoJSONPath.read(j, "$..n").map(LegadoJSONPath.text).sorted(), ["w", "x", "y", "z"])
             XCTAssertEqual(LegadoJSONPath.read(j, "deep.b.n").map(LegadoJSONPath.text), ["w"], "no leading $")
             XCTAssertEqual(LegadoJSONPath.read(j, "$['deep']['b']['n']").map(LegadoJSONPath.text), ["w"])
+            XCTAssertEqual(LegadoJSONPath.read([1, 2], "$.[*]").map(LegadoJSONPath.text), ["1", "2"], "dot before bracket")
         }
 
         func testJSSloppyModeAndJavaHelpers() throws {
@@ -176,6 +187,10 @@ final class LegadoTests: XCTestCase {
             XCTAssertEqual(try a.string("@js:let y = 4; java.base64Decode(java.base64Encode('雾港' + y))"), "雾港4")
             XCTAssertEqual(try a.string("@js:java.getString('tag.p@text') + '!'"), "hi!")
             XCTAssertEqual(try a.string("<js>result.length > 0 ? 'ok' : 'no'</js>"), "ok")
+            // 长佩-style chapter name: template, then <js> with {{rule}} filled from the item, then ## cleanup.
+            let item = LegadoAnalyzer(["order": 3, "name": "第3章 雨夜", "type": "item"] as [String: Any], baseURL: "", ctx: LegadoContext(source: htmlSource))
+            XCTAssertEqual(try item.string("第{{$.order}}章 {{$.name}}\n<js>\nvol = \"{{$.type}}\"==\"volume\"?\" 📖 \":\"\"\nvol+result+vol\n</js>\n##第\\d+章\\s*(?=第\\d+章)"), "第3章 雨夜")
+            XCTAssertEqual(try item.string("第{{$.order}}章##第"), "3章", "template then ##")
         }
 
         func testURLRules() throws {
@@ -204,4 +219,34 @@ final class LegadoTests: XCTestCase {
             XCTAssertTrue(list[0].supported)
             XCTAssertFalse(list[1].supported, "audio sources not supported")
         }
-    }
+
+        /// Rhino `Packages.*` shim and Legado crypto helpers (as used by API sources such as 七猫).
+        func testJavaCompatibilityShim() throws {
+            let a = an("<p/>")
+            // MD5 through MessageDigest + java.lang.String bytes (signed bytes → hex).
+            XCTAssertEqual(try a.string("""
+                    @js:var b = Packages.java.security.MessageDigest.getInstance('MD5').digest(new Packages.java.lang.String('a').getBytes('UTF-8'));
+                    var h = ''; for (var i = 0; i < b.length; i++) { var x = (b[i] & 0xff).toString(16); h += (x.length < 2 ? '0' : '') + x; } h
+                    """), "0cc175b9c0f1b6a831c399e269772661")
+                // AES-CBC round trip with IV prefix, like 七猫's qmDecode.
+                XCTAssertEqual(try a.string("""
+                        @js:var A = Packages.java.util.Arrays, B = Packages.java.util.Base64;
+                        var key = new Packages.javax.crypto.spec.SecretKeySpec(new Packages.java.lang.String('242ccb8230d709e1').getBytes('UTF-8'), 'AES');
+                        var iv = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16];
+                        var c = Packages.javax.crypto.Cipher.getInstance('AES/CBC/PKCS5Padding');
+                        c.init(1, key, new Packages.javax.crypto.spec.IvParameterSpec(iv));
+                        var enc = iv.concat(c.doFinal(new Packages.java.lang.String('雾港·第一章').getBytes('UTF-8')));
+                        var raw = B.getDecoder().decode(B.getEncoder().encodeToString(enc));
+                        var d = Packages.javax.crypto.Cipher.getInstance('AES/CBC/PKCS5Padding');
+                        d.init(2, key, new Packages.javax.crypto.spec.IvParameterSpec(A.copyOfRange(raw, 0, 16)));
+                        String(new Packages.java.lang.String(d.doFinal(A.copyOfRange(raw, 16, raw.length)), 'UTF-8'))
+                        """), "雾港·第一章")
+                    // Legado helper: createSymmetricCrypto (ECB, Base64 in/out).
+                    XCTAssertEqual(try a.string("@js:var c = java.createSymmetricCrypto('AES/ECB/PKCS5Padding', '1234567890abcdef'); c.decryptStr(c.encryptBase64('hello'))"), "hello")
+                    // Raw deflate through Inflater(true): data compressed by Apple's zlib (raw deflate).
+                    let src = Data("一段压缩过的正文。".utf8)
+                    let comp = try (src as NSData).compressed(using: .zlib) as Data
+                    let js = "@js:var b = [\(LegadoBytes.json(comp).map(String.init).joined(separator: ","))]; var inf = new Packages.java.util.zip.Inflater(true); inf.setInput(b, 0, b.length); var out = Packages.java.util.Arrays.copyOf(b, \(src.count)); inf.inflate(out); inf.end(); String(new Packages.java.lang.String(out, 'UTF-8'))"
+                    XCTAssertEqual(try a.string(js), "一段压缩过的正文。")
+                }
+            }
