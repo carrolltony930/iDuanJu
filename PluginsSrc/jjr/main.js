@@ -19,15 +19,19 @@ const HEADERS = {
 };
 
 // 分类 id 用 c- 前缀和列表 id 区分
+// 分类 hash 是 32 位，少一位站点也会回 200 但内容是错的——必须用完整值
 const CATEGORIES = [
   { id: 'latest-updates', name: '最新的' },
   { id: 'top-rated', name: '最受欢迎' },
-  { id: 'c-ffc7a71b8aae8ddd4203', name: '欧美' },
-  { id: 'c-2f3d48fda20378cbdaaa', name: '日本有码' },
-  { id: 'c-281b22d3c2f5255ed57e', name: '韩国女主播' },
-  { id: 'c-251e96ab3240ae3fb3dc', name: '会员认证作品' },
-  { id: 'c-b8e26987b0bae1d56a00', name: '李宗瑞全集' },
-  { id: 'c-0c3d3255db00e2d3b27d', name: '肛交' }
+  { id: 'c-cb186ba8ba160b86eb97025b94353cac', name: '高清' },
+  { id: 'c-ffc7a71b8aae8ddd42031cea42f5bb7c', name: '欧美' },
+  { id: 'c-2f3d48fda20378cbdaaa099069a4af1e', name: '日本有码' },
+  { id: 'c-281b22d3c2f5255ed57e7a09bee253f1', name: '韩国女主播' },
+  { id: 'c-5a4e793520c46cbaee2b67760e5aea28', name: '东京热' },
+  { id: 'c-f8789a0bf37c07c754c8e6fe27daf5f6', name: '成人动漫' },
+  { id: 'c-251e96ab3240ae3fb3dc8bc854061957', name: '会员认证作品' },
+  { id: 'c-b8e26987b0bae1d56a00de631e4d1a68', name: '李宗瑞全集' },
+  { id: 'c-0c3d3255db00e2d3b27db08661096b23', name: '肛交' }
 ];
 
 const srcCache = {};
@@ -83,9 +87,13 @@ function pageResult(items, page) {
 }
 
 function categoryPath(id, page) {
-  const n = page > 1 ? page + '/' : '';
-  if (id.indexOf('c-') === 0) return '/categories/' + id.slice(2) + '/' + n;
-  return '/' + id + '/' + n;
+  if (id.indexOf('c-') === 0) {
+    // /categories/{hash}      第 1 页（带尾部斜杠会 404）
+    // /categories/{hash}/{n}  第 n 页
+    const h = id.slice(2);
+    return '/categories/' + h + (page > 1 ? '/' + page : '');
+  }
+  return '/' + id + '/' + (page > 1 ? page + '/' : '');
 }
 
 function detailPath(id) {
@@ -97,7 +105,7 @@ function detailPath(id) {
 export default {
   async home() {
     const html = await req('/latest-updates/');
-    return { categories: CATEGORIES, items: parseCards(html), hasMore: true };
+    return { categories: CATEGORIES, items: parseCards(html), hasMore: true, coverHeaders: { 'Referer': SITE + '/', 'User-Agent': UA } };
   },
 
   async category(input) {
@@ -105,7 +113,7 @@ export default {
     const page = Math.max(1, Number(input.page || 1));
     const kind = CATEGORIES.some(function (c) { return c.id === id; }) ? id : 'latest-updates';
     const html = await req(categoryPath(kind, page));
-    return pageResult(parseCards(html), page);
+    const r = pageResult(parseCards(html), page); r.coverHeaders = { 'Referer': SITE + '/', 'User-Agent': UA }; return r;
   },
 
   async search(input) {
@@ -113,7 +121,7 @@ export default {
     const page = Math.max(1, Number(input.page || 1));
     if (!kw) return { items: [], page: 1, hasMore: false };
     const html = await req('/search/?q=' + encodeURIComponent(kw) + (page > 1 ? '&page=' + page : ''));
-    return pageResult(parseCards(html), page);
+    const r = pageResult(parseCards(html), page); r.coverHeaders = { 'Referer': SITE + '/', 'User-Agent': UA }; return r;
   },
 
   async detail(input) {
@@ -137,6 +145,7 @@ export default {
       title: title,
       cover: cover,
       desc: tags ? '标签：' + clean(tags[1]) : '',
+      coverHeaders: { 'Referer': SITE + '/', 'User-Agent': UA },
       lines: [{ name: '默认', episodes: [{ id: String(input.id), name: title }] }]
     };
   },
