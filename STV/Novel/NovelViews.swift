@@ -138,7 +138,7 @@ struct NovelHomeView: View {
                 Thread.sleep(forTimeInterval: 0.2)
                 return (d, HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "text/html; charset=utf-8"])!)
             }
-            if LegadoSourceStore.shared.sources.isEmpty, let sd = FileManager.default.contents(atPath: dir + "/sources.json"),
+if let sd = FileManager.default.contents(atPath: dir + "/sources.json"),
             let list = try? LegadoSourceStore.parse(sd) { LegadoSourceStore.shared.add(list) }
         }
         guard store.books.isEmpty, let p = ProcessInfo.processInfo.environment["STV_NOVEL_SEED"], !p.isEmpty,

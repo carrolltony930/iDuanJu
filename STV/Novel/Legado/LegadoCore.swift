@@ -282,7 +282,97 @@ final class LegadoJS {
             // Rhino scope helpers: `this.getHeaderMap()` (the request headers) and login state (not supported → empty).
             globalThis.getHeaderMap = () => call('headers', null);
             globalThis.getSource = () => globalThis.source;
-                globalThis.Packages = {
+              
+  // ---- login, browser and cache (Legado `source` / `cache` objects) ----
+  const parseObj = (t) => { try { return JSON.parse(t) || new Object(); } catch (e) { return new Object(); } };
+  globalThis.__wrapSource = (src) => {
+    src.getKey = () => src.bookSourceUrl;
+    src.getVariable = () => java.get('__sourceVariable');
+    src.setVariable = (v) => java.put('__sourceVariable', str(v));
+    src.get = (k) => java.get(k);
+    src.put = (k, v) => java.put(k, v);
+    src.getLoginInfo = () => call('loginInfo', null);
+    src.getLoginInfoMap = () => parseObj(call('loginInfo', null));
+    src.putLoginInfo = (v) => { call('putLoginInfo', { v: str(v) }); return true; };
+    src.removeLoginInfo = () => call('putLoginInfo', { v: '' });
+    src.getLoginHeader = () => call('loginHeader', null);
+    src.getLoginHeaderMap = () => parseObj(call('loginHeader', null));
+    src.putLoginHeader = (v) => call('putLoginHeader', { v: str(v) });
+    src.removeLoginHeader = () => call('putLoginHeader', { v: '' });
+    src.getLoginJs = () => '';
+    return src;
+  };
+  globalThis.cache = {
+    get: (k) => call('cacheGet', { k: str(k) }),
+    put: (k, v, sec) => { call('cachePut', { k: str(k), v: v == null ? null : str(v), sec: Number(sec || 0) }); return v; },
+    delete: (k) => call('cachePut', { k: str(k), v: null, sec: 0 }),
+    getFromMemory: (k) => call('cacheGet', { k: 'mem.' + str(k) }),
+    putMemory: (k, v) => call('cachePut', { k: 'mem.' + str(k), v: str(v), sec: 0 }),
+    getFile: (k) => call('cacheGet', { k: 'file.' + str(k) }),
+    putFile: (k, v, sec) => call('cachePut', { k: 'file.' + str(k), v: str(v), sec: Number(sec || 0) }),
+  };
+  Object.assign(globalThis.java, {
+    webView: (html, url, js) => call('webView', { html: html == null ? null : str(html), url: url == null ? null : str(url), js: js == null ? null : str(js) }),
+    webViewGetSource: (html, url, js) => call('webView', { html: html == null ? null : str(html), url: url == null ? null : str(url), js: js == null ? null : str(js) }),
+    startBrowser: (url, title) => { call('browser', { url: str(url), title: title == null ? '' : str(title), wait: false }); return ''; },
+    startBrowserAwait: (url, title) => { const b = call('browser', { url: str(url), title: title == null ? '' : str(title), wait: true }); return { body: () => b, code: () => 200, url: () => str(url) }; },
+    showBrowser: (url, title) => { call('browser', { url: str(url), title: title == null ? '' : str(title), wait: false }); return ''; },
+    getCookieStr: (u) => java.getCookie(u),
+  });
+
+  // ---- Jsoup / Java collections on top of host-side libxml nodes (handles) ----
+  const jsoupEl = (h) => ({
+    __h: h,
+    select: (q) => jsoupEls(call('jsoup.select', { h: [h], q: str(q) })),
+    selectFirst: (q) => { const r = call('jsoup.select', { h: [h], q: str(q), first: true }); return r.length ? jsoupEl(r[0]) : null; },
+    getElementsByClass: (c) => jsoupEls(call('jsoup.select', { h: [h], q: '.' + str(c) })),
+    getElementsByTag: (t) => jsoupEls(call('jsoup.select', { h: [h], q: str(t) })),
+    getElementById: (i) => { const r = call('jsoup.select', { h: [h], q: '#' + str(i), first: true }); return r.length ? jsoupEl(r[0]) : null; },
+    children: () => jsoupEls(call('jsoup.children', { h: [h] })),
+    text: () => call('jsoup.text', { h: [h] }),
+    ownText: () => call('jsoup.ownText', { h: [h] }),
+    textNodes: () => call('jsoup.textNodes', { h: [h] }).map((t) => ({ text: () => t, toString: () => t })),
+    attr: (k) => call('jsoup.attr', { h: [h], k: str(k) }),
+    absUrl: (k) => call('jsoup.attr', { h: [h], k: 'abs:' + str(k) }),
+    hasClass: (c) => (' ' + call('jsoup.attr', { h: [h], k: 'class' }) + ' ').indexOf(' ' + str(c) + ' ') >= 0,
+    html: () => call('jsoup.html', { h: [h] }),
+    outerHtml: () => call('jsoup.outer', { h: [h] }),
+    toString: () => call('jsoup.outer', { h: [h] }),
+  });
+  const jsoupEls = (hs) => {
+    const a = hs.map(jsoupEl);
+    const def = (k, f) => Object.defineProperty(a, k, { value: f, enumerable: false });
+    def('select', (q) => jsoupEls(call('jsoup.select', { h: hs, q: str(q) })));
+    def('text', () => call('jsoup.text', { h: hs }));
+    def('eachText', () => hs.map((x) => call('jsoup.text', { h: [x] })));
+    def('attr', (k) => call('jsoup.attr', { h: hs, k: str(k) }));
+    def('eachAttr', (k) => hs.map((x) => call('jsoup.attr', { h: [x], k: str(k) })));
+    def('html', () => call('jsoup.html', { h: hs }));
+    def('outerHtml', () => call('jsoup.outer', { h: hs }));
+    def('first', () => (a.length ? a[0] : null));
+    def('last', () => (a.length ? a[a.length - 1] : null));
+    def('eq', (i) => jsoupEls(hs[i] === undefined ? [] : [hs[i]]));
+    def('toString', () => call('jsoup.outer', { h: hs }));
+    return a;
+  };
+  globalThis.org = { jsoup: { Jsoup: { parse: (html) => jsoupEl(call('jsoup.parse', { html: str(html) })) } } };
+  Object.assign(globalThis.java, {
+    getElement: (rule) => jsoupEls(call('jsoup.rule', { rule: str(rule) })),
+    getElements: (rule) => jsoupEls(call('jsoup.rule', { rule: str(rule) })),
+  });
+  // Java List / Collection methods on arrays (rules hand `result` to scripts as lists).
+  const listMethods = {
+    toArray: function () { return this; },
+    size: function () { return this.length; },
+    get: function (i) { return this[i]; },
+    isEmpty: function () { return this.length === 0; },
+    add: function (x) { this.push(x); return true; },
+    contains: function (x) { return this.indexOf(x) >= 0; },
+  };
+  for (const k of Object.keys(listMethods)) {
+    if (!(k in Array.prototype)) Object.defineProperty(Array.prototype, k, { value: listMethods[k], enumerable: false, writable: true, configurable: true });
+  }
+  globalThis.Packages = {
                     java: { lang: { String: JString, Thread: { sleep: () => {} } }, util: { Arrays, Base64, zip: { Inflater } }, security: { MessageDigest } },
                     javax: { crypto: { Cipher, spec: { SecretKeySpec, IvParameterSpec } } },
                     cn: { hutool: { crypto: { digest: { DigestUtil: { md5Hex: (s) => java.md5Encode(s) } } } } },
@@ -312,9 +402,6 @@ final class LegadoJS {
                         getWebViewUA: () => call('ua', {}),
                         androidId: () => call('androidId', {}),
                         ajaxAll: (urls) => (urls || []).map((u) => { try { const r = call('connect', { url: str(u) }); return { body: () => r.body, code: () => r.status, url: () => r.url }; } catch (e) { return { body: () => '', code: () => 500, url: () => str(u) }; } }),
-                        startBrowser: () => { throw new Error('需要内置浏览器（暂不支持）'); },
-                        startBrowserAwait: () => { throw new Error('需要内置浏览器（暂不支持）'); },
-                        showBrowser: () => { throw new Error('需要内置浏览器（暂不支持）'); },
                         getVerificationCode: () => { throw new Error('需要输入验证码（暂不支持）'); },
                         openUrl: () => {}, open: () => {}, getThemeConfig: () => ({}),
                 });
@@ -338,7 +425,7 @@ final class LegadoJS {
             header += "var \(k) = \(json)[0];\n"
         }
         // `book` / `source` / `chapter` objects also answer Legado's getter style (book.getVariable, source.getKey()).
-        header += "if (typeof source === 'object' && source) { source.getKey = () => source.bookSourceUrl; source.getVariable = () => java.get('__sourceVariable'); source.setVariable = (v) => java.put('__sourceVariable', String(v)); source.getLoginHeader = () => ''; source.getLoginHeaderMap = () => ({}); source.getLoginInfo = () => ''; source.getLoginInfoMap = () => ({}); source.putLoginHeader = () => {}; source.putLoginInfo = () => false; source.removeLoginHeader = () => {}; source.get = (k) => java.get(k); source.put = (k, v) => java.put(k, v); }\n"
+        header += "if (typeof source === 'object' && source) __wrapSource(source);\n"
         header += "if (typeof book === 'object' && book) { book.getVariable = () => ''; }\n"
         // jsLib and the snippet run as separate scripts (separate scopes in Legado). Top-level `let` / `const` become
         // `var` so names declared in both, or by two snippets, do not clash in the shared global scope.

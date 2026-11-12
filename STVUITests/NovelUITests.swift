@@ -210,4 +210,31 @@ final class NovelUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["第三章 灯塔"].waitForExistence(timeout: 10))
         shot("legado_05_ch3")
     }
+
+    /// 书源登录 page built from loginUi: fields, a source button, 登录 → login() stores the login header.
+    func testSourceLoginForm() {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchEnvironment["STV_HOME_TAB"] = "novel"
+        app.launchEnvironment["STV_LEGADO_FIXTURE"] = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("STVTests/Fixtures/legado").path
+        app.launch()
+        el("novel.sources").tap()
+        let row = app.staticTexts["测试书站"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.press(forDuration: 1.0)
+        app.buttons["登录"].firstMatch.tap()
+        let account = app.textFields["账号"]
+        XCTAssertTrue(account.waitForExistence(timeout: 5), "login form not shown")
+        // Start logged out (state persists between runs).
+        if app.buttons["退出登录"].exists { app.buttons["退出登录"].tap() }
+        XCTAssertTrue(app.secureTextFields["密码"].exists)
+        account.tap(); account.typeText("reader01")
+        app.buttons["测试按钮"].tap()
+        XCTAssertTrue(app.staticTexts["书源按钮已执行"].waitForExistence(timeout: 5), "button action did not run")
+        el("login.submit").tap()
+        XCTAssertTrue(app.staticTexts["已登录：reader01"].waitForExistence(timeout: 5), "login() did not run")
+        shot("legado_06_login")
+        shot("legado_06_login")
+    }
 }

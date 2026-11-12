@@ -30,8 +30,10 @@ struct LegadoChapter: Codable, Hashable {
 
 /// Chapter text cleanup: HTML → paragraphs.
 enum LegadoContent {
-    static func text(fromHTML h: String) -> String {
-        guard h.contains("<") else { return h }
+    static func text(fromHTML h0: String) -> String {
+        // Escaped markup (`&lt;br/&gt;`) is unescaped first so its tags become line breaks too.
+        let h = h0.contains("&lt;") && !h0.contains("<") ? HTMLText.decodeEntities(h0) : h0
+        guard h.contains("<") else { return HTMLText.decodeEntities(h) }
         var s = h.replacingOccurrences(of: "<(script|style)[\\s\\S]*?</\\1>", with: "", options: [.regularExpression, .caseInsensitive])
         s = s.replacingOccurrences(of: #"<br\s*/?>|</p>|</div>|<p[^>]*>|</h\d>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
         s = s.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
@@ -169,6 +171,50 @@ enum LegadoClient {
 
     private static func cleanAuthor(_ s: String) -> String {
         clean(s).replacingOccurrences(of: #"^(作\s*者\s*[：:]\s*)"#, with: "", options: .regularExpression)
+    }
+
+    // MARK: login
+
+    struct LoginField: Hashable {
+        var name: String
+        var type: String          // text / password / select / button
+        var options: [String]
+        var action: String?
+        var defaultValue: String
+    }
+
+    /// `loginUrl` as JS (function definitions), without the @js: / <js> wrapper; nil when it is a plain URL.
+    static func loginJS(_ s: LegadoSource) -> String? {
+        guard var t = s.loginUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+        if t.hasPrefix("@js:") { t.removeFirst(4) }
+        else if t.hasPrefix("<js>") { t = t.replacingOccurrences(of: "<js>", with: "").replacingOccurrences(of: "</js>", with: "") }
+        else if t.hasPrefix("http") || t.hasPrefix("/") { return nil }
+        return t
+    }
+
+    /// The loginUi form (Legado accepts non-strict JSON, so it goes through JS first).
+    static func loginFields(_ s: LegadoSource) -> [LoginField] {
+        guard let ui = s.loginUi?.trimmingCharacters(in: .whitespacesAndNewlines), !ui.isEmpty else { return [] }
+        let ctx = LegadoContext(source: s)
+        guard let v = try? ctx.js.eval("JSON.parse(JSON.stringify(" + ui + "))", [:]) as? [Any] else { return [] }
+        return v.compactMap { $0 as? [String: Any] }.map { d in
+            let options = (d["chars"] as? [Any])?.map { "\($0)" } ?? []
+            return LoginField(name: d["name"] as? String ?? "", type: (d["type"] as? String ?? "text").lowercased(), options: options,
+                action: d["action"] as? String, defaultValue: d["default"].map { "\($0)" } ?? options.first ?? "")
+        }
+    }
+
+    /// Runs `loginJS + call` (a button action or `login()`), like Legado's login page.
+    static func runLogin(_ s: LegadoSource, _ call: String) throws -> String {
+        let ctx = LegadoContext(source: s)
+        let code = (loginJS(s) ?? "") + "\n" + call
+        return LegadoAnalyzer.textOf(try ctx.evalJS(code, result: nil, baseURL: s.bookSourceUrl))
+    }
+
+    /// Login page URL for sources whose loginUrl is an address.
+    static func loginPage(_ s: LegadoSource) -> URL? {
+        guard loginJS(s) == nil, let t = s.loginUrl else { return nil }
+        return LegadoURL.resolve(t, base: s.bookSourceUrl)
     }
 
     // MARK: async

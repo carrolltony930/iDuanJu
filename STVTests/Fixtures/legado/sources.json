@@ -26,6 +26,8 @@
   },
   "ruleContent": {
    "content": "id.content@html"
-  }
+  },
+  "loginUrl": "function login() {\n  var i = source.getLoginInfoMap();\n  source.putLoginHeader(JSON.stringify({ token: i['账号'] || '' }));\n  return '已登录：' + (i['账号'] || '');\n}\nfunction hello() { return '书源按钮已执行'; }",
+  "loginUi": "[{name:'账号',type:'text'},{name:'密码',type:'password'},{name:'线路',type:'select',chars:['主线','备用'],default:'主线'},{name:'测试按钮',type:'button',action:'hello()'}]"
  }
 ]

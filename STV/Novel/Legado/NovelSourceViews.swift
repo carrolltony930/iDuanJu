@@ -10,6 +10,7 @@ struct NovelSourcesView: View {
     @State private var fileImport = false
     @State private var message: String?
     @State private var busy = false
+    @State private var login: LegadoSource?
 
     var body: some View {
         NavigationStack {
@@ -26,12 +27,13 @@ struct NovelSourcesView: View {
                         .onDelete { idx in store.remove(Set(idx.map { store.sources[$0].id })) }
                 } footer: {
                     if !store.sources.isEmpty {
-                        Text("共 \(store.sources.count) 个，启用 \(store.enabled.count) 个。支持「阅读」3.x 的文本书源（JSoup / CSS / XPath / JSONPath / 正则 / JS 规则）；需要网页渲染、登录的书源和有声书源暂不支持。")
+                        Text("共 \(store.sources.count) 个，启用 \(store.enabled.count) 个。需要登录的书源（带 👤 图标）长按或右滑选「登录」。支持「阅读」3.x 的文本书源（JSoup / CSS / XPath / JSONPath / 正则 / JS 规则）；需要网页渲染、登录的书源和有声书源暂不支持。")
                     }
                 }
             }
             .navigationTitle("书源")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $login) { s in NovelSourceLoginView(source: s) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -61,13 +63,25 @@ struct NovelSourcesView: View {
     private func row(_ s: LegadoSource) -> some View {
         Toggle(isOn: Binding(get: { s.isOn }, set: { store.setEnabled(s, $0) })) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(s.bookSourceName).font(.system(size: 16))
+                HStack(spacing: 6) {
+                    Text(s.bookSourceName).font(.system(size: 16))
+                    if s.hasLogin {
+                        Image(systemName: LegadoSourceState.isLoggedIn(s.bookSourceUrl) ? "person.crop.circle.fill.badge.checkmark" : "person.crop.circle")
+                            .font(.caption).foregroundStyle(LegadoSourceState.isLoggedIn(s.bookSourceUrl) ? .green : .secondary)
+                    }
+                }
                 Text([s.bookSourceGroup, URL(string: s.bookSourceUrl)?.host].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 if !s.supported { Text("暂不支持（非文本书源或没有搜索地址）").font(.caption).foregroundStyle(.orange) }
             }
         }
         .disabled(!s.supported)
+        .swipeActions(edge: .leading) {
+            if s.hasLogin { Button("登录") { login = s }.tint(.blue) }
+        }
+        .contextMenu {
+            if s.hasLogin { Button("登录", systemImage: "person.crop.circle") { login = s } }
+        }
     }
 
     private func report(_ f: () throws -> (added: Int, updated: Int, unsupported: Int)) {

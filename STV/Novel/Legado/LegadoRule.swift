@@ -34,6 +34,10 @@ final class LegadoContext {
     /// Operation-local values (`@put` inside one rule run) — `java.put` also persists them.
     var vars: [String: String] = [:]
     private var inHeaders = false
+    /// Jsoup handles for scripts (`org.jsoup.Jsoup.parse`, `java.getElement`): index into this table.
+    private var jsNodes: [LegadoNode] = []
+    private func handle(_ n: LegadoNode) -> Int { jsNodes.append(n); return jsNodes.count - 1 }
+    private func nodes(_ v: Any?) -> [LegadoNode] { ((v as? [Any]) ?? []).compactMap { ($0 as? Int).flatMap { jsNodes.indices.contains($0) ? jsNodes[$0] : nil } } }
     private var sourceScope: String { "s|" + source.bookSourceUrl }
     private var bookScope: String? { (book["bookUrl"] as? String).flatMap { $0.isEmpty ? nil : "b|" + source.bookSourceUrl + "|" + $0 } }
 
@@ -125,7 +129,48 @@ final class LegadoContext {
             return LegadoBytes.json(try LegadoBytes.cipher(s("t"), encrypt: (a["mode"] as? Int) == 1, key: LegadoBytes.data(a["key"]),
                     iv: a["iv"].map(LegadoBytes.data), data: LegadoBytes.data(a["b"])))
         case "inflate": return LegadoBytes.json(try LegadoBytes.inflate(LegadoBytes.data(a["b"]), raw: a["nowrap"] as? Bool ?? false))
+        case "jsoup.parse": return handle(LegadoDoc(s("html")).node)
+        case "jsoup.select":
+            let hits = nodes(a["h"]).flatMap { $0.css(s("q")) }
+            return (a["first"] as? Bool == true ? Array(hits.prefix(1)) : hits).map(handle)
+        case "jsoup.children": return nodes(a["h"]).flatMap(\.children).map(handle)
+        case "jsoup.rule":
+            guard let cur = stack.last else { return [] }
+            return try cur.elements(s("rule")).compactMap { $0 as? LegadoNode }.map(handle)
+        case "jsoup.text": return nodes(a["h"]).map(\.text).filter { !$0.isEmpty }.joined(separator: " ")
+        case "jsoup.ownText": return nodes(a["h"]).map(\.ownText).joined(separator: " ")
+        case "jsoup.textNodes": return nodes(a["h"]).flatMap(\.textNodes)
+        case "jsoup.attr":
+            var k = s("k"); let abs = k.hasPrefix("abs:"); if abs { k.removeFirst(4) }
+            let v = nodes(a["h"]).map { $0.attr(k) }.first { !$0.isEmpty } ?? ""
+            return abs ? LegadoURL.absolute(v, base: stack.last?.baseURL ?? source.bookSourceUrl) : v
+        case "jsoup.html": return nodes(a["h"]).map { $0.html(outer: false) }.joined(separator: "\n")
+        case "jsoup.outer": return nodes(a["h"]).map { $0.html(outer: true) }.joined(separator: "\n")
         case "ua": return LegadoHTTP.userAgent
+        case "loginInfo":
+            let m = LegadoSourceState.loginInfo(source.bookSourceUrl)
+            return m.isEmpty ? "" : String(decoding: (try? JSONSerialization.data(withJSONObject: m)) ?? Data(), as: UTF8.self)
+        case "putLoginInfo":
+            let t = s("v")
+            if let d = t.data(using: .utf8), let m = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] {
+                LegadoSourceState.setLoginInfo(source.bookSourceUrl, m.mapValues { "\($0)" })
+            } else { LegadoSourceState.set(source.bookSourceUrl, "loginInfo", t.isEmpty ? nil : t) }
+            return nil
+        case "loginHeader": return LegadoSourceState.get(source.bookSourceUrl, "loginHeader") ?? ""
+        case "putLoginHeader": LegadoSourceState.set(source.bookSourceUrl, "loginHeader", s("v").isEmpty ? nil : s("v")); return nil
+        case "cacheGet": return LegadoSourceState.cacheGet(source.bookSourceUrl, s("k"))
+        case "cachePut": LegadoSourceState.cachePut(source.bookSourceUrl, s("k"), a["v"] as? String, seconds: (a["sec"] as? Double) ?? 0); return nil
+        case "webView":
+            return try LegadoWebView.run(html: a["html"] as? String, url: (a["url"] as? String).map { LegadoURL.absolute($0, base: source.bookSourceUrl) }, js: a["js"] as? String)
+        case "browser":
+            let u = URL(string: LegadoURL.absolute(s("url"), base: source.bookSourceUrl))
+            let title = s("title").isEmpty ? source.bookSourceName : s("title")
+            if a["wait"] as? Bool == true {
+                LegadoBrowser.openBlocking(url: u, html: nil, title: title, sourceURL: source.bookSourceUrl)
+                return (try? u.map { try LegadoHTTP.fetch(URLRequest(url: $0)).text }) ?? ""
+            }
+            Task { @MainActor in await LegadoBrowser.open(url: u, html: nil, title: title, sourceURL: self.source.bookSourceUrl) }
+            return nil
         case "headers":
             // Guard against a header script that itself calls getHeaderMap().
             if inHeaders { return [:] }
@@ -757,13 +802,17 @@ enum LegadoURL {
     }
 
     static func headers(ctx: LegadoContext) throws -> [String: String] {
-        guard var h = ctx.source.header?.trimmingCharacters(in: .whitespacesAndNewlines), !h.isEmpty else { return [:] }
+        guard var h = ctx.source.header?.trimmingCharacters(in: .whitespacesAndNewlines), !h.isEmpty else {
+            return LegadoSourceState.loginHeader(ctx.source.bookSourceUrl)
+        }
         if h.hasPrefix("@js:") || h.hasPrefix("<js>") {
             let code = h.hasPrefix("@js:") ? String(h.dropFirst(4)) : h.replacingOccurrences(of: "<js>", with: "").replacingOccurrences(of: "</js>", with: "")
             h = LegadoAnalyzer.textOf(try ctx.evalJS(code, result: nil, baseURL: ctx.source.bookSourceUrl))
         }
-        guard let d = h.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return [:] }
-        return o.mapValues { "\($0)" }
+        var out = (h.data(using: .utf8).flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } ?? [:]).mapValues { "\($0)" }
+        // Login header (putLoginHeader) applies to every request of the source, like Legado.
+        for (k, v) in LegadoSourceState.loginHeader(ctx.source.bookSourceUrl) { out[k] = v }
+        return out
     }
 }
 
