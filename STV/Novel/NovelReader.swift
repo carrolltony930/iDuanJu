@@ -895,8 +895,11 @@ struct PillSlider: View {
 
     var body: some View {
         GeometryReader { g in
-            let h = g.size.height, d = h - 6
-            let x = 3 + (g.size.width - d - 6) * value.clamped
+            // 显式标注 CGFloat：新 SDK 上 `3 + (…) * value.clamped` 会被推断成歧义表达式
+            // （error: ambiguous use of operator '-'）。
+            let h: CGFloat = g.size.height
+            let d: CGFloat = h - 6
+            let x: CGFloat = 3 + (g.size.width - d - 6) * CGFloat(value.clamped)
             ZStack(alignment: .leading) {
                 Capsule().fill(track)
                 HStack {

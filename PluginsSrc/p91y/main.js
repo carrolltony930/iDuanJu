@@ -1,16 +1,16 @@
-// 91porny.com（九色 / 91PORNY）· i短剧 idj1 插件
+// 91porny.com / jiuse.icu（九色 / 91PORNY）· i短剧 idj1 插件
 //
-// 全站中文，传统服务端渲染：
-//   列表 /video?page=N（视频）、/vod?page=N（精品）、/videos?page=N（蝌蚪）
-//   详情 /video/view/{hex} 或 /video/viewhd/{hex} 或 /vod/view/{short}
-//   搜索 GET /search?keywords=…&page=N
+// 同一套系统两个域名，内容与接口一致，互为主备（首次探测，选中的记进 storage）。
 //
-// 详情页的播放地址直接写在 <video id="video-play" data-src="…index.m3u8"
-// data-poster="…jpg"> 里，不用解 Packer、没有 iframe 播放器、没有人机验证。
+// 可播的三类内容：
+//   首页推荐  /                       → /video/view/{hex}
+//   精品      /vod                    → /vod/view/{id}          HLS
+//   蝌蚪/欧美  /videos                 → /videos/view/{id}/{slug}/ MP4
+//   全部视频  /video                  → /video/viewhd/{hex}     ⚠ 这一列表几乎全是 VIP，
+//                                     详情页 data-src 固定是 //cdn2.jiuse2.cloud/hlsd/js10/index.m3u8
+//                                     （TARGETDURATION=2 的试看片段），播不了，已在 play() 里明确拒绝。
+//   搜索      /search?keywords=…&page=N
 
-// 同一套系统有多个域名（内容/结构/接口完全一致），互为主备：
-//   91porny.com（九色 / 91PORNY） · jiuse.icu（九色）
-// 首次调用时探测哪个通，选中的域名记进 host.storage，之后一直用。
 const DOMAINS = ['91porny.com', 'jiuse.icu'];
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -36,7 +36,7 @@ async function pickSite() {
   }
   for (const d of DOMAINS) {
     try {
-      const r = await host.http.request({ url: 'https://' + d + '/video', headers: headers(), timeout: 10000 });
+      const r = await host.http.request({ url: 'https://' + d + '/vod', headers: headers(), timeout: 10000 });
       if (r.status >= 200 && r.status < 400) {
         SITE = 'https://' + d;
         host.storage.set('site', d);
@@ -47,12 +47,12 @@ async function pickSite() {
 }
 
 const CATEGORIES = [
-  { id: 'video', name: '最新视频' },
+  { id: 'home', name: '首页推荐' },
   { id: 'vod', name: '精品' },
-  { id: 'videos', name: '蝌蚪' }
+  { id: 'videos', name: '蝌蚪/欧美' },
+  { id: 'video', name: '全部（含VIP）' }
 ];
 
-// detail() 抓到的直链缓存，play() 复用，少一次请求
 const srcCache = {};
 
 function clean(s) {
@@ -65,6 +65,10 @@ function clean(s) {
     .trim();
 }
 
+function unescape(s) {
+  return String(s || '').replace(/&amp;/g, '&').replace(/&#x2F;/g, '/');
+}
+
 async function req(path) {
   const res = await host.http.request({ url: path.indexOf('http') === 0 ? path : SITE + path, headers: headers(), timeout: 25000 });
   if (res.status === 429) throw host.error('E_RATE_LIMIT', '站点限流了，等 1~2 分钟再试');
@@ -73,32 +77,37 @@ async function req(path) {
   return typeof res.body === 'string' ? res.body : '';
 }
 
-// 卡片：
-//   <a class="display d-block" href="/video/viewhd/HEX"><img class="img" src="//int.ucloud165.xyz/thumb/ID.jpg">
-//     <small class="layer">00:00:12</small>…
-//   </a>
-//   <a class="title …" href="/video/viewhd/HEX">[原创] 标题</a>
+const CARD_RE = /href="(\/(?:video\/view(?:hd)?\/[0-9a-f]+|vod\/view\/[\w-]+|videos\/view\/\d+\/[^"\/]+\/?))"/g;
+
 function parseCards(html) {
   const out = [], seen = {};
-  const re = /href="(\/(?:video\/view(?:hd)?\/[0-9a-f]{8,}|vod\/view\/[\w-]+))"/g;
+  CARD_RE.lastIndex = 0;
   let m;
-  while ((m = re.exec(html)) !== null) {
-    const id = m[1].replace(/^\//, '');
+  while ((m = CARD_RE.exec(html)) !== null) {
+    const id = m[1].replace(/^\//, '').replace(/\/$/, '');
     if (seen[id]) continue;
     seen[id] = 1;
     const chunk = html.substring(m.index, m.index + 1200);
-    const cov = chunk.match(/<img[^>]+src="(\/\/[^"]+\.(?:jpg|jpeg|png|webp))"/i);
+    // 两种卡片：/video 用 <img src>，/vod 用 background-image（CSS）
+    const cov = chunk.match(/<img[^>]+src="(\/\/[^"]+\.(?:jpg|jpeg|png|webp))"/i)
+      || chunk.match(/background-image:\s*url\('([^']+)'\)/i)
+      || chunk.match(/<img[^>]+src="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp))"/i);
     const dur = chunk.match(/class="layer">([^<]+)</);
     const title = chunk.match(/class="title[^"]*"[^>]*href="[^"]*"[^>]*>([^<]+)</)
       || chunk.match(/class="title[^"]*"[^>]*>([^<]+)</);
     const views = chunk.match(/(\d+)\s*次播放/);
+    const vip = /vip-layer/.test(chunk);
     let cover = cov ? cov[1] : '';
     if (cover.indexOf('//') === 0) cover = 'https:' + cover;
+    const bits = [];
+    if (vip) bits.push('VIP');
+    if (dur) bits.push(clean(dur[1]));
+    if (views) bits.push(views[1] + '次');
     out.push({
       id: id,
       title: title ? clean(title[1]) : id,
       cover: cover,
-      remarks: [dur ? clean(dur[1]) : '', views ? views[1] + '次' : ''].filter(Boolean).join(' · ')
+      remarks: bits.join(' · ')
     });
   }
   return out;
@@ -108,46 +117,54 @@ function pageResult(items, page) {
   return { items: items, page: page, hasMore: items.length >= 20 };
 }
 
-// 详情页里取直链 / 封面 / 标题
+function detailPath(id) {
+  const p = String(id == null ? '' : id).replace(/^\//, '').replace(/\/$/, '');
+  if (/^video\/view(?:hd)?\/[0-9a-f]+$/.test(p)) return '/' + p;
+  if (/^vod\/view\/[\w-]+$/.test(p)) return '/' + p;
+  if (/^videos\/view\/\d+\/[^\/]+$/.test(p)) return '/' + p + '/';
+  return '';
+}
+
 function parseDetail(html, id) {
-  const v = html.match(/<video[^>]*\bdata-src="([^"]+)"/) || html.match(/<video[^>]*\bsrc="(https?:[^"]+\.m3u8[^"]*)"/);
+  const v = html.match(/<video[^>]*\bdata-src="([^"]+)"/) || html.match(/<video[^>]*\bsrc="(https?:[^"]+\.(?:m3u8|mp4)[^"]*)"/);
   const poster = html.match(/<video[^>]*\bdata-poster="([^"]+)"/);
   const t = html.match(/<title[^>]*>([\s\S]*?)<\/title>/);
   let title = t ? clean(t[1]) : '';
-  title = title.replace(/\s*-\s*91[^-]*$/, '').trim();
+  title = title.replace(/\s*-\s*91[^-]*$/, '').replace(/\s*-\s*蝌蚪窝.*$/, '').trim();
   const og = html.match(/property="og:image"[^>]*content="([^"]+)"/) || html.match(/content="([^"]+)"[^>]*property="og:image"/);
   const desc = html.match(/property="og:description"[^>]*content="([^"]*)"/);
   let cover = poster ? poster[1] : (og ? og[1] : '');
   if (cover.indexOf('//') === 0) cover = 'https:' + cover;
-  // HTML 属性里的 & 是 &amp;，不解码会污染 m3u8 的 query（t=…&amp;m=…）
-  const unescape = function (s) { return String(s || '').replace(/&amp;/g, '&').replace(/&#x2F;/g, '/'); };
   let src = unescape(v ? v[1] : '');
-  // 站点的 data-src 有时是协议相对地址「//cdn2.jiuse2.cloud/…」，
-  // 直接交给播放器会因为「不是 https」被丢弃，这里补上 scheme。
+  // 站点的 data-src 有时是协议相对地址「//cdn2.jiuse2.cloud/…」，不补 scheme 会被播放器丢弃
   if (src.indexOf('//') === 0) src = 'https:' + src;
-  if (src && src.indexOf('http') !== 0 && src.indexOf('//') > 0) src = 'https://' + src.replace(/^.*?\/\//, '');
   return { src: src, cover: unescape(cover), title: title || id, desc: desc ? clean(desc[1]).substring(0, 160) : '' };
 }
 
-function detailPath(id) {
-  const p = String(id == null ? '' : id).replace(/^\//, '');
-  if (/^(video|vod)\/view(?:hd)?\/[\w-]+$/.test(p)) return '/' + p;
-  return '';
+// VIP 视频的 data-src 固定是 …/hlsd/jsN/index.m3u8（TARGETDURATION=2 的试看片段），不是完整片。
+function isVIPPreview(src) {
+  return /\/hlsd\/js\d+\//.test(String(src || ''));
+}
+
+function listPath(kind, page) {
+  const n = page > 1 ? (kind === 'home' ? '/?page=' + page : '?page=' + page) : '';
+  if (kind === 'home') return '/' + n;
+  return '/' + kind + n;
 }
 
 export default {
   async home() {
     await pickSite();
-    const html = await req('/video');
+    const html = await req('/vod');
     return { categories: CATEGORIES, items: parseCards(html), hasMore: true };
   },
 
   async category(input) {
     await pickSite();
-    const id = String(input.id || 'video');
+    const id = String(input.id || 'vod');
     const page = Math.max(1, Number(input.page || 1));
-    const kind = CATEGORIES.some(function (c) { return c.id === id; }) ? id : 'video';
-    const html = await req('/' + kind + (page > 1 ? '?page=' + page : ''));
+    const kind = CATEGORIES.some(function (c) { return c.id === id; }) ? id : 'vod';
+    const html = await req(listPath(kind, page));
     return pageResult(parseCards(html), page);
   },
 
@@ -166,12 +183,13 @@ export default {
     if (!path) throw host.error('E_NOT_FOUND', '缺少视频 id');
     const html = await req(path);
     const d = parseDetail(html, String(input.id));
-    if (d.src) srcCache[String(input.id)] = { u: d.src, t: Date.now() };
+    if (d.src && !isVIPPreview(d.src)) srcCache[String(input.id)] = { u: d.src, t: Date.now() };
+    const vip = isVIPPreview(d.src) || !d.src;
     return {
       title: d.title,
       cover: d.cover,
-      desc: d.desc,
-      lines: [{ name: '默认', episodes: [{ id: String(input.id), name: d.title }] }]
+      desc: vip ? '⚠️ VIP 视频，只能试看（需要会员才能看完整版）' : d.desc,
+      lines: [{ name: '默认', episodes: [{ id: String(input.id), name: vip ? '试看（VIP）' : d.title }] }]
     };
   },
 
@@ -187,18 +205,22 @@ export default {
     if (!src) {
       const html = await req(path);
       const d = parseDetail(html, id);
-      if (!d.src) throw host.error('E_UNSUPPORTED', '详情页里没有找到播放地址');
       src = d.src;
-      srcCache[id] = { u: src, t: Date.now() };
+      if (src && !isVIPPreview(src)) srcCache[id] = { u: src, t: Date.now() };
+    }
+    if (!src) throw host.error('E_UNSUPPORTED', '详情页里没有找到播放地址');
+    if (isVIPPreview(src)) {
+      throw host.error('E_UNSUPPORTED', '这是 VIP 视频，只能试看几十秒，需要会员才能看完整版');
     }
 
-    host.log('play ' + id + ' → 1 条线路');
+    const isMp4 = /\.mp4(\?|$)/i.test(src);
+    host.log('play ' + id + ' → 1 条线路 (' + (isMp4 ? 'mp4' : 'hls') + ')');
     host.log('  ' + src);
     return {
       streams: [{
         name: '线路1',
         url: src,
-        format: 'hls',
+        format: isMp4 ? 'mp4' : 'hls',
         headers: { 'Referer': SITE + '/', 'User-Agent': UA }
       }]
     };

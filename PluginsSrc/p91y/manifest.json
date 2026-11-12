@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "com.idj.p91y",
   "name": "九色 91PORNY",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "author": { "name": "carrolltony930" },
   "description": "九色（91porny.com / jiuse.icu 双域名自动选通）：国产自拍 + 精品 + 蝌蚪，全站中文，详情页直接给 HLS 直链，无第三方播放器、无人机验证。",
   "type": "video",
@@ -12,7 +12,7 @@
   "entry": "main.js",
   "permissions": {
     "http": ["91porny.com", "*.91porny.com", "jiuse.icu", "*.jiuse.icu"],
-    "media": ["*.jiuse2.cloud", "*.jiuse3.cloud", "*.jiuse4.cloud", "*.jiuse5.cloud", "*.jiuse.cloud", "*.ucloud165.xyz"],
+    "media": ["*.jiuse2.cloud", "*.jiuse3.cloud", "*.jiuse4.cloud", "*.jiuse5.cloud", "*.jiuse.cloud", "*.ucloud165.xyz", "*.vcloud14.xyz", "*.cdnkdjs.com"],
     "cloudflare": false,
     "storage": true,
     "login": false
