@@ -47,16 +47,19 @@ enum HomeSource: Hashable, Identifiable {
         case .manga: "漫画"
         }
     }
-    var subs: [HomeTab] {
+    @MainActor var subs: [HomeTab] {
         switch self {
         case .hongguo: [.hongguo(.all), .hongguo(.human), .hongguo(.comic), .actorRank]
         case .huangguo: [.huangguo(.video), .huangguo(.legacy)]
-        case .ai: [.hongguo(.ai), .huangguo(.ai)]
+        case .ai: SourceGate.shared.showHuangguo ? [.hongguo(.ai), .huangguo(.ai)] : [.hongguo(.ai)]
         case .site(let s): [.site(s)]
         case .channels, .manga: []
         }
     }
-    @MainActor static var all: [HomeSource] { [.hongguo, .huangguo, .ai] + SourceGate.shared.visibleSites.map { .site($0) } + [.channels, .manga] }
+    @MainActor static var all: [HomeSource] {
+        let g = SourceGate.shared
+        return [.hongguo] + (g.showHuangguo ? [.huangguo] : []) + [.ai] + g.visibleSites.map { .site($0) } + [.channels, .manga]
+    }
 }
 
 /// Caches the first page of each rank board for the home cards.

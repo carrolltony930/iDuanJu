@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 我的 → 片源管理. Built-in sources (红果/黄果) are always on; long-video sites are opt-in and can be
+/// 我的 → 片源管理. 红果 is always on; 黄果 (18+) and long-video sites are opt-in and can be
 /// hidden behind Face ID (`SourceGate`).
 struct SourcesView: View {
     private let gate = SourceGate.shared
@@ -18,9 +18,11 @@ struct SourcesView: View {
                 } else {
                     group("内置") {
                         builtinRow(.hongguo, "play.rectangle.on.rectangle")
-                        builtinRow(.huangguo, "film.stack")
                     }
-                    group("长视频片源（默认隐藏）") {
+                    group("18+ 片源（默认隐藏）") {
+                        Toggle(isOn: Binding(get: { gate.huangguo }, set: { gate.setHuangguo($0) })) {
+                            label(DramaSource.huangguo.label, "film.stack", sub: "18+ · 视频站 / App 源 / AI 站；开启后出现在「发现」「搜索」和 AI剧")
+                        }.padding(14).accessibilityIdentifier("sources.huangguo")
                         ForEach(Sites.all.filter(\.isAdult)) { s in siteRow(s) }
                     }
                     group("插件与采集站") {
@@ -67,7 +69,7 @@ struct SourcesView: View {
                     }
                     group("隐私") {
                         Toggle(isOn: Binding(get: { gate.lockEnabled }, set: { on in Task { await gate.setLock(on) } })) {
-                            label("隐藏片源锁（Face ID）", "faceid", sub: "每次启动后需验证才显示长视频片源")
+                            label("隐藏片源锁（Face ID）", "faceid", sub: "每次启动后需验证才显示 18+ 片源")
                         }.padding(14)
                         actionRow("清除站点验证 Cookie", "trash") {
                             await CFCookies.clearAll()
@@ -100,7 +102,7 @@ struct SourcesView: View {
     private var lockedCard: some View {
         VStack(spacing: 14) {
             Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(STVTheme.accent)
-            Text("长视频片源已锁定").font(.headline).foregroundStyle(STVTheme.text)
+            Text("18+ 片源已锁定").font(.headline).foregroundStyle(STVTheme.text)
             Button("用 Face ID 解锁") { Task { await gate.unlock() } }
                 .buttonStyle(.borderedProminent).tint(STVTheme.accent)
         }.frame(maxWidth: .infinity).padding(.top, 80)

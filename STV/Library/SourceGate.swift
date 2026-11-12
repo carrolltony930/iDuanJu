@@ -16,6 +16,8 @@ final class SourceGate {
     private(set) var adultChannels: Bool
     /// Adult manga sources (none shipped yet; the switch gates any added later).
     private(set) var adultManga: Bool
+    /// 黄果 (视频站 / App 源 / AI 站) is 18+: hidden until switched on here, like the long-video sites.
+    private(set) var huangguo: Bool
     private let d = UserDefaults.standard
 
     private init() {
@@ -25,10 +27,12 @@ final class SourceGate {
         unlocked = !d.bool(forKey: "stv.sources.lock")
         adultChannels = d.bool(forKey: "stv.sources.adultChannels")
         adultManga = d.bool(forKey: "stv.sources.adultManga")
+        huangguo = d.bool(forKey: "stv.sources.huangguo")
         #if DEBUG
         // Simulator screenshot hook: STV_SOURCES=jable,missav enables those sites for this run.
         if let e = ProcessInfo.processInfo.environment["STV_SOURCES"], !e.isEmpty {
             enabled = Set(e.split(separator: ",").compactMap { DramaSource(rawValue: String($0)) })
+            huangguo = e.split(separator: ",").contains("huangguo")
             unlocked = true
         }
         if ProcessInfo.processInfo.environment["STV_ADULT_CHANNELS"] == "1" { adultChannels = true; unlocked = true }
@@ -40,17 +44,19 @@ final class SourceGate {
         Sites.all.filter { s in (s.isDynamic && !s.isAdult) || (unlocked && enabled.contains(s)) }
     }
     var enabledCount: Int { enabled.count }
-    func isVisible(_ s: DramaSource) -> Bool { s.isBuiltin || (unlocked && enabled.contains(s)) }
+    func isVisible(_ s: DramaSource) -> Bool { s == .huangguo ? showHuangguo : s.isBuiltin || (unlocked && enabled.contains(s)) }
     /// Series-level check: Telegram videos from adult channels follow the adult-channel switch.
     func isVisible(_ s: HGSeries) -> Bool {
         guard s.source == .telegram else { return isVisible(s.source) }
         return !(s.tags.contains(TGVideoProvider.adultTag)) || showAdultChannels
     }
     /// Sources offered in the search tab strip.
-    var searchSources: [DramaSource] { [.hongguo, .huangguo] + visibleSites }
+    var searchSources: [DramaSource] { [.hongguo] + (showHuangguo ? [.huangguo] : []) + visibleSites }
 
     var showAdultChannels: Bool { unlocked && adultChannels }
     var showAdultManga: Bool { unlocked && adultManga }
+    var showHuangguo: Bool { unlocked && huangguo }
+    func setHuangguo(_ on: Bool) { huangguo = on; d.set(on, forKey: "stv.sources.huangguo") }
     func setAdultChannels(_ on: Bool) { adultChannels = on; d.set(on, forKey: "stv.sources.adultChannels") }
     func setAdultManga(_ on: Bool) { adultManga = on; d.set(on, forKey: "stv.sources.adultManga") }
 
