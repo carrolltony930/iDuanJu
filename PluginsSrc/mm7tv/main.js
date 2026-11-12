@@ -132,6 +132,50 @@ function pickStreams(text) {
   return found;
 }
 
+// Dean Edwards packer 的自实现：宿主的 unpackPacker 用 `([^']*)` 取字典，
+// 遇到字典里含单引号的页面（7mmtv 常见）就会失败，所以这里按转义扫描来取字符串。
+function readQuoted(s, i) {
+  if (s.charAt(i) !== "'") return null;
+  let out = '', j = i + 1;
+  while (j < s.length) {
+    const ch = s.charAt(j);
+    if (ch === '\\') { out += s.charAt(j + 1); j += 2; continue; }
+    if (ch === "'") return [out, j + 1];
+    out += ch; j += 1;
+  }
+  return null;
+}
+
+function unpackPacker(html) {
+  const start = html.indexOf('eval(function(p,a,c,k,e');
+  if (start < 0) return '';
+  const open = html.indexOf('}(', start);
+  if (open < 0) return '';
+  const pq = readQuoted(html, open + 2);
+  if (!pq) return '';
+  const rest = html.slice(pq[1]);
+  const nums = /^\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*/.exec(rest);
+  if (!nums) return '';
+  const base = Number(nums[1]), count = Number(nums[2]);
+  const dq = readQuoted(html, pq[1] + nums[0].length);
+  if (!dq) return '';
+  const dict = dq[0].split('|');
+  let text = pq[0];
+  const D = '0123456789abcdefghijklmnopqrstuvwxyz';
+  function toBase(n, b) {
+    if (n === 0) return '0';
+    let s = '';
+    while (n > 0) { s = D.charAt(n % b) + s; n = Math.floor(n / b); }
+    return s;
+  }
+  for (let k = count - 1; k >= 0; k--) {
+    if (k < dict.length && dict[k]) {
+      const re = new RegExp('\\b' + toBase(k, base) + '\\b', 'g');
+      text = text.split(re).join(dict[k]);
+    }
+  }
+  return text;
+}
 export default {
   async home() {
     const html = await req(SITE + '/zh/');
@@ -234,10 +278,16 @@ export default {
       throw host.error('E_UNSUPPORTED', '人机验证后仍拿不到地址（该视频可能已失效）');
     }
     let text = '';
-    try { text = String(host.codec.unpackPacker(page) || ''); } catch (e) { text = ''; }
+    try { text = unpackPacker(page); } catch (e) { text = ''; }
+    if (!text) { try { text = String(host.codec.unpackPacker(page) || ''); } catch (e) { text = ''; } }
     let list = pickStreams(text);
     if (!list.length) list = pickStreams(page);
-    if (!list.length) throw host.error('E_UNSUPPORTED', '播放器配置解析失败（页面结构可能变了）');
+    if (!list.length) {
+      const dood = /turnstile|g-recaptcha|DoodStream/i.test(page);
+      throw host.error('E_UNSUPPORTED', dood
+        ? '这个视频需要人机验证（' + embHost + '），App 版本支持后可点「去验证」'
+        : '播放器配置解析失败（embed 域名 ' + embHost + '，页面 ' + page.length + ' 字节）');
+    }
 
     const hdr = { 'Referer': SITE + '/', 'User-Agent': UA };
     const streams = [];
