@@ -40,6 +40,8 @@ struct NovelHomeView: View {
     @State private var errors: [String] = []
     @State private var reading: NovelBook?
     @State private var deleting: NovelBook?
+    @State private var searching = false
+    @State private var managing = false
 
     private let cols = Array(repeating: GridItem(.flexible(), spacing: 14), count: 3)
 
@@ -50,6 +52,16 @@ struct NovelHomeView: View {
                     Text("我的书架").font(.system(size: 20, weight: .bold)).foregroundStyle(STVTheme.text)
                     Spacer()
                     if busy { ProgressView().padding(.trailing, 6) }
+                    Button { searching = true } label: {
+                        Label("搜书", systemImage: "magnifyingglass").font(.system(size: 15, weight: .medium))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(STVTheme.accent)
+                    .accessibilityIdentifier("novel.search")
+                    Button { managing = true } label: {
+                        Label("书源", systemImage: "books.vertical").font(.system(size: 15, weight: .medium))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(STVTheme.accent)
+                    .accessibilityIdentifier("novel.sources")
                     Button { importing = true } label: {
                         Label("导入", systemImage: "plus").font(.system(size: 15, weight: .medium))
                     }
@@ -60,7 +72,7 @@ struct NovelHomeView: View {
                     ContentUnavailableView {
                         Label("书架是空的", systemImage: "books.vertical")
                     } description: {
-                        Text("点右上角「导入」添加本地 TXT / EPUB。\n支持 UTF-8、GBK、GB18030、Big5 编码，自动识别章节。")
+                        Text("「导入」本地 TXT / EPUB（自动识别编码和章节），\n或在「书源」导入「阅读」(Legado) 书源后「搜书」。")
                     }
                     .padding(.top, 60)
                 } else {
@@ -90,7 +102,15 @@ struct NovelHomeView: View {
         .confirmationDialog("从书架删除「\(deleting?.title ?? "")」？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
             Button("删除", role: .destructive) { if let b = deleting { store.remove(b) }; deleting = nil }
         } message: { Text("会同时删除阅读进度和本机保存的文件。") }
-        .fullScreenCover(item: $reading) { b in NovelReaderView(book: b) }
+        .fullScreenCover(item: $reading) { b in NovelReaderView(book: store.book(b.id) ?? b) }
+        .sheet(isPresented: $searching) {
+            NovelSearchView { b in
+                searching = false
+                // open after the sheet is gone
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { reading = b }
+            }
+        }
+        .sheet(isPresented: $managing) { NovelSourcesView() }
         .task { seedFixtureIfNeeded() }
     }
 
@@ -103,9 +123,24 @@ struct NovelHomeView: View {
         }
     }
 
-    /// UI tests: `STV_NOVEL_SEED=/abs/file.txt` imports that file once into an empty shelf.
+    /// UI tests: `STV_NOVEL_SEED=/abs/file.txt` imports that file once into an empty shelf;
+    /// `STV_LEGADO_FIXTURE=/abs/dir` serves a fake book site from `routes.json` and imports its `sources.json`.
     private func seedFixtureIfNeeded() {
         #if DEBUG
+        if let dir = ProcessInfo.processInfo.environment["STV_LEGADO_FIXTURE"], !dir.isEmpty,
+        let rd = FileManager.default.contents(atPath: dir + "/routes.json"),
+        let routes = (try? JSONSerialization.jsonObject(with: rd)) as? [String: String] {
+            LegadoHTTP.transport = { req in
+                let u = req.url!.absoluteString
+                guard let f = routes[u], let d = FileManager.default.contents(atPath: dir + "/" + f) else {
+                    return (Data(), HTTPURLResponse(url: req.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+                }
+                Thread.sleep(forTimeInterval: 0.2)
+                return (d, HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "text/html; charset=utf-8"])!)
+            }
+            if LegadoSourceStore.shared.sources.isEmpty, let sd = FileManager.default.contents(atPath: dir + "/sources.json"),
+            let list = try? LegadoSourceStore.parse(sd) { LegadoSourceStore.shared.add(list) }
+        }
         guard store.books.isEmpty, let p = ProcessInfo.processInfo.environment["STV_NOVEL_SEED"], !p.isEmpty,
         let data = FileManager.default.contents(atPath: p),
         let parsed = try? NovelImport.parse(data, fileName: (p as NSString).lastPathComponent) else { return }
@@ -120,6 +155,8 @@ struct NovelCover: View {
         ZStack {
             if book.hasCover, let img = UIImage(contentsOfFile: NovelStore.coverURL(book.id).path) {
                 Image(uiImage: img).resizable().scaledToFill()
+            } else if let u = book.coverURL {
+                WebCover(url: u, title: book.title)
             } else {
                 let h = abs(book.title.hashValue % 360)
                 LinearGradient(colors: [Color(hue: Double(h) / 360, saturation: 0.35, brightness: 0.72),

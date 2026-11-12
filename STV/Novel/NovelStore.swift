@@ -11,6 +11,14 @@ struct NovelBook: Codable, Hashable, Identifiable {
     var chapters: [NovelChapter]
     var hasCover: Bool
     var addedAt: Date
+    // 书源 books: chapters are fetched on demand and cached under <dir>/ch/<index>.txt.
+    var sourceURL: String?
+    var bookURL: String?
+    var tocURL: String?
+    var coverURL: String?
+    var chapterURLs: [String]?
+
+    var isWeb: Bool { sourceURL != nil }
 }
 
 struct NovelProgress: Codable, Hashable {
@@ -85,6 +93,48 @@ final class NovelStore {
         save(progress, "stv.novel.progress")
     }
 
+    nonisolated static func chapterFile(_ b: NovelBook, _ i: Int) -> URL { dir(b.id).appendingPathComponent("ch/\(i).txt") }
+
+    func isCached(_ b: NovelBook, _ i: Int) -> Bool { !b.isWeb || FileManager.default.fileExists(atPath: Self.chapterFile(b, i).path) }
+
+    func cache(_ b: NovelBook, _ i: Int, _ text: String) {
+        let f = Self.chapterFile(b, i)
+        try? FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Data(text.utf8).write(to: f)
+    }
+
+    /// Adds a book found through a 书源 (or returns the one already on the shelf).
+    @discardableResult
+    func addWeb(_ item: LegadoSearchItem, info: LegadoBookInfo?, toc: [LegadoChapter]) -> NovelBook {
+        if let b = webBook(source: item.sourceURL, url: item.bookURL) { return b }
+        // Synthetic 1000-character slots keep the shared position maths (fraction, slider) chapter-based.
+        let chapters = toc.enumerated().map { NovelChapter(title: $1.title, start: $0 * 1000, end: ($0 + 1) * 1000) }
+        var b = NovelBook(id: UUID().uuidString, title: info?.name.isEmpty == false ? info!.name : item.name,
+            author: (info?.author).flatMap { $0.isEmpty ? nil : $0 } ?? (item.author.isEmpty ? nil : item.author),
+            format: "web", chapters: chapters, hasCover: false, addedAt: Date())
+        b.sourceURL = item.sourceURL
+        b.bookURL = item.bookURL
+        b.tocURL = info?.tocURL ?? item.bookURL
+        b.coverURL = (info?.cover).flatMap { $0.isEmpty ? nil : $0 } ?? (item.cover.isEmpty ? nil : item.cover)
+        b.chapterURLs = toc.map(\.url)
+        try? FileManager.default.createDirectory(at: Self.dir(b.id), withIntermediateDirectories: true)
+        books.insert(b, at: 0)
+        save(books, "stv.novel.books")
+        return b
+    }
+
+    func webBook(source: String, url: String) -> NovelBook? { books.first { $0.sourceURL == source && $0.bookURL == url } }
+
+    /// New chapters from a refreshed 目录 (cached text is kept by index).
+    func updateToc(_ b: NovelBook, _ toc: [LegadoChapter]) {
+        guard let i = books.firstIndex(where: { $0.id == b.id }), !toc.isEmpty else { return }
+        books[i].chapters = toc.enumerated().map { NovelChapter(title: $1.title, start: $0 * 1000, end: ($0 + 1) * 1000) }
+        books[i].chapterURLs = toc.map(\.url)
+        save(books, "stv.novel.books")
+    }
+
+    func book(_ id: String) -> NovelBook? { books.first { $0.id == id } }
+
     func text(_ b: NovelBook) -> String {
         if let t = textCache[b.id] { return t }
         let t = (try? String(contentsOf: Self.dir(b.id).appendingPathComponent("book.txt"), encoding: .utf8)) ?? ""
@@ -94,6 +144,7 @@ final class NovelStore {
 
     func chapterText(_ b: NovelBook, _ i: Int) -> String {
         guard b.chapters.indices.contains(i) else { return "" }
+        if b.isWeb { return (try? String(contentsOf: Self.chapterFile(b, i), encoding: .utf8)) ?? "" }
         let c = b.chapters[i]
         let ns = text(b) as NSString
         guard c.end <= ns.length else { return "" }
@@ -116,6 +167,7 @@ final class NovelStore {
     /// 0…1 through the whole book (by characters).
     func fraction(_ b: NovelBook) -> Double? {
         guard let p = progress[b.id], let last = b.chapters.last, last.end > 0, b.chapters.indices.contains(p.chapter) else { return nil }
+        if b.isWeb { return Double(p.chapter + 1) / Double(b.chapters.count) }
         return min(1, Double(b.chapters[p.chapter].start + p.offset) / Double(last.end))
     }
 

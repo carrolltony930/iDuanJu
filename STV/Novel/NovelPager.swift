@@ -61,13 +61,23 @@ final class NovelPaginator {
         if let c = cache[i] { return c }
         guard let s = style, book.chapters.indices.contains(i) else { return (NSAttributedString(), [NSRange(location: 0, length: 0)]) }
         let title = book.chapters[i].title
-        let a = NovelLayout.attributed(store.chapterText(book, i), title: title, size: s.fontSize, lineSpacing: s.lineSpacing,
+        var raw = store.chapterText(book, i)
+        if book.isWeb && raw.isEmpty {
+            // 书源 chapter not downloaded yet: placeholder page, fetched in the background (reader re-paginates on arrival).
+            let loader = NovelWebLoader.shared
+            loader.ensure(book, i)
+            raw = title + "\n" + (loader.error(book, i).map { "加载失败：\($0)" } ?? "正在加载…")
+        }
+        let a = NovelLayout.attributed(raw, title: title, size: s.fontSize, lineSpacing: s.lineSpacing,
             indent: s.indent, font: NovelFonts.font(s.fontID, size: s.fontSize), bold: NovelFonts.font(s.fontID, size: s.fontSize * 1.3, bold: true), color: s.text)
         let p = NovelLayout.paginate(a, size: s.size)
         if cache.count > 6 { cache = cache.filter { abs($0.key - i) <= 2 } }   // keep neighbours only
         cache[i] = (a, p)
         return (a, p)
     }
+
+    /// Drops cached layouts (a 书源 chapter arrived).
+    func invalidate() { cache = [:] }
 
     func pageCount(_ chapter: Int) -> Int { self.chapter(chapter).pages.count }
 

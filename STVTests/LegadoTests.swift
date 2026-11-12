@@ -1,0 +1,207 @@
+import XCTest
+@testable import STV
+
+/// 「阅读」书源引擎: rule syntaxes, URL rules, and the search → 详情 → 目录 → 正文 flow against fake sites.
+final class LegadoTests: XCTestCase {
+    private var requests: [URLRequest] = []
+
+    override func setUp() {
+        requests = []
+        let pages: [String: (String, String)] = [
+            // HTML site (GBK keyword, UTF-8 pages)
+            "https://book.test/search?q=%CE%ED%B8%DB&p=1": ("""
+                <html><head><meta charset="utf-8"></head><body><div class="result-list">
+                <div class="item"><a class="title" href="/book/1/">雾港</a><span class="author">作者：测试</span><img src="/cover/1.jpg">
+                <p class="intro">海边的故事</p><span>最新：第三章 灯塔</span></div>
+                <div class="item"><a class="title" href="/book/2/">雾港外传</a><span class="author">作者：别人</span><img src="/cover/2.jpg">
+                <p class="intro">番外</p><span>最新：后记</span></div>
+                </div></body></html>
+                """, "text/html"),
+            "https://book.test/book/1/": ("""
+                <html><body><h1>雾港</h1><div id="info"><p>作者：测试</p><p>状态：完结</p></div><div id="intro">一个港口的故事</div>
+                <a id="toc" href="/book/1/list_1.html">目录</a></body></html>
+                """, "text/html"),
+            "https://book.test/book/1/list_1.html": ("""
+                <ul id="list"><li><a href="1.html">第一章 雨夜</a></li><li><a href="/book/1/2.html">第二章 渡口</a></li></ul>
+                <a class="next" href="list_2.html">下一页</a>
+                """, "text/html"),
+            "https://book.test/book/1/list_2.html": ("""
+                <ul id="list"><li><a href="3.html">第三章 灯塔</a></li></ul><a class="next" href="list_2.html">下一页</a>
+                """, "text/html"),
+            "https://book.test/book/1/1.html": ("""
+                <div id="content">　　第一段<br>　　第二段<script>ad()</script></div><a id="next" href="1_2.html">下一页</a>
+                """, "text/html"),
+            "https://book.test/book/1/1_2.html": ("""
+                <div id="content"><p>第三段 广告abc</p></div><a id="next" href="2.html">下一章</a>
+                """, "text/html"),
+            // JSON API site
+            "https://api.test/s": (#"{"data":{"list":[{"bookName":"雾港","authorName":"测试","id":7,"cover":"c.jpg","tags":["海","港"]}]}}"#, "application/json"),
+            "https://api.test/book/7": (#"{"name":"雾港","toc":"https://api.test/toc/7"}"#, "application/json"),
+            "https://api.test/toc/7": (#"{"chapters":[{"t":"一","u":"/c/1"},{"t":"二","u":"/c/2","vip":true}]}"#, "application/json"),
+            "https://api.test/c/2": (#"{"content":"<p>甲</p><p>乙</p>"}"#, "application/json"),
+        ]
+        LegadoHTTP.transport = { [weak self] req in
+            self?.requests.append(req)
+            let u = req.url!.absoluteString
+            guard let (body, ct) = pages[u] else {
+                return (Data(), HTTPURLResponse(url: req.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+            }
+            return (Data(body.utf8), HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": ct])!)
+        }
+    }
+
+    override func tearDown() { LegadoHTTP.transport = nil }
+
+    private var htmlSource: LegadoSource {
+        LegadoSource(bookSourceUrl: "https://book.test", bookSourceName: "测试书站",
+            searchUrl: "/search?q={{key}}&p={{page}},{\"charset\":\"gbk\"}",
+            ruleSearch: ["bookList": "class.result-list@class.item", "name": "class.title@text", "author": "class.author@text",
+                "bookUrl": "class.title@href", "coverUrl": "tag.img@src", "intro": "@css:p.intro@text",
+                "lastChapter": "tag.span.1@text##最新："],
+            ruleBookInfo: ["name": "tag.h1@text", "author": "id.info@tag.p.0@text", "intro": "id.intro@text", "tocUrl": "id.toc@href",
+                "kind": "id.info@tag.p.-1@text"],
+            ruleToc: ["chapterList": "id.list@tag.li", "chapterName": "tag.a@text", "chapterUrl": "tag.a@href", "nextTocUrl": "class.next@href"],
+            ruleContent: ["content": "id.content@html", "nextContentUrl": "id.next@href", "replaceRegex": "##广告\\S*"])
+    }
+
+    private var jsonSource: LegadoSource {
+        LegadoSource(bookSourceUrl: "https://api.test", bookSourceName: "接口站",
+            searchUrl: "https://api.test/s,{\"method\":\"POST\",\"body\":\"kw={{key}}&page={{page}}\"}",
+            ruleSearch: ["bookList": "$.data.list[*]", "name": "$.bookName", "author": "$.authorName",
+                "bookUrl": "https://api.test/book/{$.id}", "coverUrl": "$.cover@js:'https://img.test/' + result",
+                "kind": "{{$.authorName}}-作者", "intro": "@js:java.md5Encode('a')", "lastChapter": "$.tags[*]"],
+            ruleBookInfo: ["name": "$.name", "tocUrl": "$.toc"],
+            ruleToc: ["chapterList": "-$.chapters[*]", "chapterName": "$.t", "chapterUrl": "$.u"],
+            ruleContent: ["content": "$.content"])
+    }
+
+    func testHTMLSourceFlow() throws {
+        let s = htmlSource
+        let hits = try LegadoClient.search(s, key: "雾港")
+        XCTAssertEqual(requests.first?.url?.absoluteString, "https://book.test/search?q=%CE%ED%B8%DB&p=1", "keyword must be GBK-encoded")
+        XCTAssertEqual(hits.map(\.name), ["雾港", "雾港外传"])
+        XCTAssertEqual(hits[0].author, "测试", "作者： prefix stripped")
+        XCTAssertEqual(hits[0].bookURL, "https://book.test/book/1/")
+        XCTAssertEqual(hits[0].cover, "https://book.test/cover/1.jpg")
+        XCTAssertEqual(hits[0].intro, "海边的故事")
+        XCTAssertEqual(hits[0].latest, "第三章 灯塔")
+
+        let info = try LegadoClient.info(s, bookURL: hits[0].bookURL)
+        XCTAssertEqual(info.name, "雾港")
+        XCTAssertEqual(info.author, "测试")
+        XCTAssertEqual(info.kind, "状态：完结")
+        XCTAssertEqual(info.tocURL, "https://book.test/book/1/list_1.html")
+
+        let toc = try LegadoClient.toc(s, tocURL: info.tocURL)
+        XCTAssertEqual(toc.map(\.title), ["第一章 雨夜", "第二章 渡口", "第三章 灯塔"], "follows nextTocUrl once, no loop")
+        XCTAssertEqual(toc.map(\.url), ["https://book.test/book/1/1.html", "https://book.test/book/1/2.html", "https://book.test/book/1/3.html"])
+
+        let text = try LegadoClient.content(s, chapter: toc[0], nextChapterURL: toc[1].url)
+        XCTAssertEqual(text, "第一段\n第二段\n第三段", "page 2 joined, script dropped, replaceRegex applied, stops before next chapter")
+    }
+
+    func testJSONSourceFlow() throws {
+        let s = jsonSource
+        let hits = try LegadoClient.search(s, key: "雾港")
+        let req = try XCTUnwrap(requests.first)
+        XCTAssertEqual(req.httpMethod, "POST")
+        XCTAssertEqual(String(decoding: req.httpBody ?? Data(), as: UTF8.self), "kw=%E9%9B%BE%E6%B8%AF&page=1")
+        XCTAssertEqual(hits.count, 1)
+        let h = hits[0]
+        XCTAssertEqual(h.name, "雾港")
+        XCTAssertEqual(h.bookURL, "https://api.test/book/7", "{$.id} template")
+        XCTAssertEqual(h.cover, "https://img.test/c.jpg", "rule then @js: with result")
+        XCTAssertEqual(h.kind, "测试-作者", "{{ }} rule template")
+        XCTAssertEqual(h.intro, "0cc175b9c0f1b6a831c399e269772661", "java.md5Encode")
+        XCTAssertEqual(h.latest, "海\n港")
+
+        let info = try LegadoClient.info(s, bookURL: h.bookURL)
+        XCTAssertEqual(info.tocURL, "https://api.test/toc/7")
+        let toc = try LegadoClient.toc(s, tocURL: info.tocURL)
+        XCTAssertEqual(toc.map(\.title), ["二", "一"], "- reverses the list")
+        XCTAssertEqual(toc[0].url, "https://api.test/c/2")
+        XCTAssertEqual(try LegadoClient.content(s, chapter: toc[0], nextChapterURL: nil), "甲\n乙")
+    }
+
+    // MARK: Rule pieces
+
+    private func an(_ html: String) -> LegadoAnalyzer {
+        LegadoAnalyzer(html, baseURL: "https://x.test/a/", ctx: LegadoContext(source: htmlSource))
+    }
+
+    func testJsoupIndexesAndAttributes() throws {
+        let a = an("<ul><li class='c a'>1</li><li class='c'>2</li><li class='c'>3</li><li>4 <b>x</b></li></ul>")
+        XCTAssertEqual(try a.strings("tag.li.0@text"), ["1"])
+        XCTAssertEqual(try a.strings("tag.li.-1@ownText"), ["4"])
+        XCTAssertEqual(try a.strings("tag.li!0@text"), ["2", "3", "4 x"])
+        XCTAssertEqual(try a.strings("tag.li[1:2]@text"), ["2", "3"])
+        XCTAssertEqual(try a.strings("tag.li[0,2]@text"), ["1", "3"])
+        XCTAssertEqual(try a.strings("class.c a@text"), ["1"], "multiple classes")
+        XCTAssertEqual(try a.strings("li.c:eq(1)@text"), ["2"], "css segment with :eq")
+        XCTAssertEqual(try a.elements("tag.ul@children").count, 4)
+        XCTAssertEqual(try a.string("tag.li.0@text&&tag.li.1@text"), "1\n2")
+        XCTAssertEqual(try a.string("tag.p@text||tag.li.2@text"), "3")
+        XCTAssertEqual(try a.string("@XPath://li[2]/text()"), "2")
+        XCTAssertEqual(try a.string("//li[last()]/b/text()"), "x")
+    }
+
+    func testRegexAndPutGet() throws {
+        let a = an("<div id='n' data-id='42'>书名：雾港</div>")
+        XCTAssertEqual(try a.string("id.n@text##书名："), "雾港")
+        XCTAssertEqual(try a.string("id.n@text##书名：(.*)##《$1》###"), "《雾港》", "### keeps the first match, replaced")
+            _ = try a.string("@put:{\"bid\":\"id.n@data-id\"}id.n@text")
+            XCTAssertEqual(try a.string("@get:{bid}"), "42")
+            let list = LegadoAnalyzer("a=1;b=2;", baseURL: "", ctx: LegadoContext(source: htmlSource))
+            let items = try list.elements(":(\\w)=(\\d);")
+            XCTAssertEqual(items.count, 2)
+            let g = LegadoAnalyzer(items[1], baseURL: "", ctx: LegadoContext(source: htmlSource))
+            XCTAssertEqual(try g.string("$1-$2"), "b-2")
+        }
+
+        func testJSONPathFeatures() {
+            let j: [String: Any] = ["a": [["k": 1, "n": "x"], ["k": 2, "n": "y"], ["k": 3, "n": "z"]], "deep": ["b": ["n": "w"]]]
+            XCTAssertEqual(LegadoJSONPath.read(j, "$.a[-1].n").map(LegadoJSONPath.text), ["z"])
+            XCTAssertEqual(LegadoJSONPath.read(j, "$.a[0:2].n").map(LegadoJSONPath.text), ["x", "y"])
+            XCTAssertEqual(LegadoJSONPath.read(j, "$.a[?(@.k > 1)].n").map(LegadoJSONPath.text), ["y", "z"])
+            XCTAssertEqual(LegadoJSONPath.read(j, "$.a[?(@.n == 'x')].k").map(LegadoJSONPath.text), ["1"])
+            XCTAssertEqual(LegadoJSONPath.read(j, "$..n").map(LegadoJSONPath.text).sorted(), ["w", "x", "y", "z"])
+            XCTAssertEqual(LegadoJSONPath.read(j, "deep.b.n").map(LegadoJSONPath.text), ["w"], "no leading $")
+            XCTAssertEqual(LegadoJSONPath.read(j, "$['deep']['b']['n']").map(LegadoJSONPath.text), ["w"])
+        }
+
+        func testJSSloppyModeAndJavaHelpers() throws {
+            let a = an("<p>hi</p>")
+            // Undeclared assignment (sloppy mode), base64, getString re-entry, top-level let in two evaluations.
+            XCTAssertEqual(try a.string("@js:x = 2; let y = 3; String(x * y)"), "6")
+            XCTAssertEqual(try a.string("@js:let y = 4; java.base64Decode(java.base64Encode('雾港' + y))"), "雾港4")
+            XCTAssertEqual(try a.string("@js:java.getString('tag.p@text') + '!'"), "hi!")
+            XCTAssertEqual(try a.string("<js>result.length > 0 ? 'ok' : 'no'</js>"), "ok")
+        }
+
+        func testURLRules() throws {
+            let ctx = LegadoContext(source: htmlSource)
+            ctx.key = "a b"
+            ctx.page = 2
+            XCTAssertEqual(try LegadoURL.request("/s/<x,y,z>?k={{key}}&p={{page * 10}}", ctx: ctx, base: "https://book.test").request.url?.absoluteString,
+                "https://book.test/s/y?k=a%20b&p=20")
+            let r = try LegadoURL.request("https://h.test/q,{\"method\":\"POST\",\"body\":{\"k\":\"{{key}}\"},\"headers\":{\"X-A\":\"1\"}}", ctx: ctx, base: "")
+            XCTAssertEqual(r.request.httpMethod, "POST")
+            XCTAssertEqual(r.request.value(forHTTPHeaderField: "X-A"), "1")
+            XCTAssertEqual(String(decoding: r.request.httpBody ?? Data(), as: UTF8.self), #"{"k":"a b"}"#, "JSON bodies keep the raw keyword")
+            XCTAssertEqual(try LegadoURL.request("@js:'https://j.test/' + page", ctx: ctx, base: "").request.url?.absoluteString, "https://j.test/2")
+        }
+
+        func testImportParsesLegadoExport() throws {
+            let json = #"""
+            [{"bookSourceUrl":"https://a.test","bookSourceName":"A","bookSourceType":0,"enabled":true,"searchUrl":"/s?k={{key}}",
+                    "ruleSearch":{"bookList":"class.item","name":"tag.a@text","checkKeyWord":123}, "weight": 0},
+                {"bookSourceUrl":"https://audio.test","bookSourceName":"听书","bookSourceType":1,"searchUrl":"/s"},
+                {"broken": true}]
+            """#
+            let list = try LegadoSourceStore.parse(Data(json.utf8))
+            XCTAssertEqual(list.map(\.bookSourceName), ["A", "听书"], "broken entries skipped")
+            XCTAssertEqual(list[0].ruleSearch?["checkKeyWord"], "123", "non-string rule values kept as text")
+            XCTAssertTrue(list[0].supported)
+            XCTAssertFalse(list[1].supported, "audio sources not supported")
+        }
+    }

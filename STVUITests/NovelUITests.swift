@@ -125,7 +125,13 @@ final class NovelUITests: XCTestCase {
     func testListen() {
         openSample()
         let win = app.windows.firstMatch
+        // Start at the top of the long first chapter (progress is shared between tests).
+        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        el("novel.menu.目录").tap()
+        app.buttons["第一章 雨夜"].tap()
+        XCTAssertTrue(app.staticTexts["第一章 雨夜"].waitForExistence(timeout: 3))
         let start = pageLabel().0
+        XCTAssertEqual(start, 1)
         win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         el("novel.listen").tap()
         let state = el("novel.listen.state")
@@ -163,5 +169,45 @@ final class NovelUITests: XCTestCase {
         while Date() < end, !el("novel.fonts").exists { el("novel.font.kaiti").tap(); Thread.sleep(forTimeInterval: 2); if el("novel.font.kaiti").label.contains("楷体") && app.images["checkmark"].exists { break } }
         win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
         shot("novel_kaiti")
+    }
+
+    /// 书源: source list → 搜书 → 详情 → 开始阅读 (chapters fetched from a local fake site) → 目录 jump.
+    func testLegadoSourceSearchAndRead() {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchEnvironment["STV_HOME_TAB"] = "novel"
+        app.launchEnvironment["STV_LEGADO_FIXTURE"] = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("STVTests/Fixtures/legado").path
+        app.launch()
+        el("novel.sources").tap()
+        XCTAssertTrue(app.staticTexts["测试书站"].waitForExistence(timeout: 5), "imported source not listed")
+        shot("legado_01_sources")
+        app.buttons["完成"].tap()
+        el("novel.search").tap()
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("wu\n")
+        let hit = el("search.result.雾港")
+        XCTAssertTrue(hit.waitForExistence(timeout: 10), "no search result")
+        XCTAssertTrue(el("search.result.雾港外传").exists)
+        shot("legado_02_search")
+        hit.tap()
+        XCTAssertTrue(app.staticTexts["共 3 章"].waitForExistence(timeout: 10), "目录 not loaded on the detail page")
+        XCTAssertTrue(app.staticTexts["雾气笼罩的港口小城里，每个人都在等一艘船。"].exists, "intro missing")
+        shot("legado_03_detail")
+        el("detail.read").tap()
+        // Reader opens on 第一章, fetched from the fake site.
+        XCTAssertTrue(el("novel.page").waitForExistence(timeout: 10), "reader did not open")
+        let end = Date().addingTimeInterval(10)
+        while Date() < end, pageLabel().1 < 2 { Thread.sleep(forTimeInterval: 0.3) }
+        XCTAssertGreaterThan(pageLabel().1, 1, "chapter text did not arrive (still the 正在加载 page)")
+        shot("legado_04_reader")
+        let win = app.windows.firstMatch
+        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        el("novel.menu.目录").tap()
+        app.buttons["第三章 灯塔"].tap()
+        XCTAssertTrue(app.staticTexts["第三章 灯塔"].waitForExistence(timeout: 10))
+        shot("legado_05_ch3")
     }
 }

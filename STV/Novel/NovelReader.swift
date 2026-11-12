@@ -153,6 +153,7 @@ struct NovelReaderView: View {
     private let store = NovelStore.shared
     @State private var prefs = NovelPrefs.shared
     @State private var fonts = NovelFonts.shared
+    @State private var loader = NovelWebLoader.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var paginator: NovelPaginator
@@ -208,15 +209,38 @@ struct NovelReaderView: View {
                     Text("↑上滑显示工具栏").font(.system(size: 12)).foregroundStyle(pal.secondary)
                         .padding(.bottom, 8).transition(.opacity).allowsHitTesting(false)
                 }
+                if book.isWeb, let err = loader.error(book, ref.chapter), !menu {
+                    Button { loader.retry(book, ref.chapter) } label: {
+                        Label("重新加载本章", systemImage: "arrow.clockwise").font(.system(size: 14, weight: .medium))
+                            .padding(.horizontal, 16).frame(height: 40).background(Capsule().fill(pal.panel))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(pal.ink).padding(.bottom, 90)
+                    .accessibilityHint(err)
+                    .accessibilityIdentifier("novel.retry")
+                }
                 if speaker.active && !menu { miniPlayer.padding(.trailing, 16).padding(.bottom, 40).frame(maxWidth: .infinity, alignment: .trailing) }
                 if menu { menuLayer.transition(.opacity) }
             }
-            .onAppear { configure(geo); restore(); brightness = Double(screen?.brightness ?? 0.5) }
+            .onAppear {
+                configure(geo); restore(); brightness = Double(screen?.brightness ?? 0.5)
+                if book.isWeb {
+                    loader.prefetch(book, around: ref.chapter)
+                    Task { _ = try? await loader.refreshToc(book) }
+                }
+            }
             .onChange(of: layoutKey(geo)) { _, _ in relayout(geo) }
         }
         .statusBarHidden(!menu)
         .preferredColorScheme(prefs.theme == .night ? .dark : .light)
         .onChange(of: speaker.sentence) { _, s in if let s { follow(s) } }
+        .onChange(of: loader.revision) { _, _ in
+            guard book.isWeb else { return }
+            let c = ref.chapter, o = offsetInChapter
+            paginator.invalidate()
+            ref = paginator.ref(chapter: c, offset: o)
+            version += 1
+        }
+        .onChange(of: ref.chapter) { _, c in if book.isWeb { loader.prefetch(book, around: c) } }
         .onDisappear { store.addReadTime(book, Date().timeIntervalSince(opened)); speaker.stop() }
         .task {
             // WeRead shows the hint briefly when a book opens.
@@ -410,7 +434,8 @@ struct NovelReaderView: View {
         let left = Double(totalChars - bookOffset) / 450 / 60      // ~450 字/分钟
         return VStack(spacing: 18) {
             HStack(spacing: 0) {
-                stat("\(Int((fraction * 100).rounded()))", "%", left >= 1 ? "约\(Int(left.rounded()))小时后读完" : "约\(max(1, Int(left * 60)))分钟后读完")
+                stat("\(Int((fraction * 100).rounded()))", "%", book.isWeb ? "还剩 \(book.chapters.count - ref.chapter - 1) 章"
+                    : left >= 1 ? "约\(Int(left.rounded()))小时后读完" : "约\(max(1, Int(left * 60)))分钟后读完")
                 Divider().frame(height: 34)
                 stat(read >= 3600 ? "\(Int(read / 3600))" : "\(Int(read / 60))", read >= 3600 ? "小时\(Int(read.truncatingRemainder(dividingBy: 3600) / 60))分钟" : "分钟", "阅读时长")
                 Divider().frame(height: 34)
@@ -571,8 +596,12 @@ struct NovelReaderView: View {
             Divider()
             HStack {
                 infoCell("\(book.chapters.count)", "章节")
-                infoCell(totalChars >= 10_000 ? String(format: "%.1f万", Double(totalChars) / 10_000) : "\(totalChars)", "字数")
-                infoCell(book.format.uppercased(), "格式")
+                if book.isWeb {
+                    infoCell(LegadoSourceStore.shared.source(book.sourceURL ?? "")?.bookSourceName ?? "已删除", "书源")
+                } else {
+                    infoCell(totalChars >= 10_000 ? String(format: "%.1f万", Double(totalChars) / 10_000) : "\(totalChars)", "字数")
+                    infoCell(book.format.uppercased(), "格式")
+                }
                 infoCell(book.addedAt.formatted(.dateTime.month().day()), "导入")
             }
         }

@@ -1,0 +1,31 @@
+[
+ {
+  "bookSourceUrl": "https://book.test",
+  "bookSourceName": "测试书站",
+  "bookSourceGroup": "测试",
+  "bookSourceType": 0,
+  "searchUrl": "/search?q={{key}}",
+  "ruleSearch": {
+   "bookList": "class.result-list@class.item",
+   "name": "class.title@text",
+   "author": "class.author@text",
+   "bookUrl": "class.title@href",
+   "intro": "@css:p.intro@text",
+   "lastChapter": "tag.span.1@text##最新："
+  },
+  "ruleBookInfo": {
+   "name": "tag.h1@text",
+   "author": "id.info@tag.p.0@text",
+   "intro": "id.intro@text",
+   "tocUrl": "id.toc@href"
+  },
+  "ruleToc": {
+   "chapterList": "id.list@tag.li",
+   "chapterName": "tag.a@text",
+   "chapterUrl": "tag.a@href"
+  },
+  "ruleContent": {
+   "content": "id.content@html"
+  }
+ }
+]
