@@ -199,12 +199,14 @@ struct HomeView: View {
                     ForEach(HomeSource.all.filter { !$0.subs.isEmpty }) { s in
                         VStack(alignment: .leading, spacing: 10) {
                             Text(s.label).font(.subheadline.weight(.semibold)).foregroundStyle(STVTheme.secondary)
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], spacing: 10) {
+                            // 固定 3 列：和「红果」那一排保持一致；长标签缩放而不是撑成整行
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                                 ForEach(s.subs, id: \.self) { t in
                                     let on = s == source && (subs[s] ?? s.subs[0]) == t
                                     Button { subs[s] = t; source = s; showChannels = false } label: {
                                         Text(t.subLabel).font(.subheadline.weight(on ? .semibold : .regular))
                                             .foregroundStyle(on ? STVTheme.accent : STVTheme.text)
+                                            .lineLimit(1).minimumScaleFactor(0.7)
                                             .frame(maxWidth: .infinity).frame(height: 40)
                                             .background(on ? STVTheme.accent.opacity(0.14) : STVTheme.glass,
                                                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
