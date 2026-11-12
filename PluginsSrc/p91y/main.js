@@ -46,11 +46,12 @@ async function pickSite() {
   }
 }
 
+// 只保留免费板块：/video 那个「全部」列表整页都是 VIP 试看（data-src 恒为 hlsd/jsN），
+// 直接不提供，免得列表里一堆点进去播不了的条目。
 const CATEGORIES = [
   { id: 'home', name: '首页推荐' },
   { id: 'vod', name: '精品' },
-  { id: 'videos', name: '蝌蚪/欧美' },
-  { id: 'video', name: '全部（含VIP）' }
+  { id: 'videos', name: '蝌蚪/欧美' }
 ];
 
 const srcCache = {};
@@ -96,7 +97,9 @@ function parseCards(html) {
     const title = chunk.match(/class="title[^"]*"[^>]*href="[^"]*"[^>]*>([^<]+)</)
       || chunk.match(/class="title[^"]*"[^>]*>([^<]+)</);
     const views = chunk.match(/(\d+)\s*次播放/);
-    const vip = /vip-layer/.test(chunk);
+    // 带 vip-layer 的卡片是 VIP 试看，直接跳过不显示
+    if (/vip-layer/.test(chunk)) continue;
+    const vip = false;
     let cover = cov ? cov[1] : '';
     if (cover.indexOf('//') === 0) cover = 'https:' + cover;
     const bits = [];
