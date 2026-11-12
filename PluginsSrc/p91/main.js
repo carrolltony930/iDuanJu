@@ -51,27 +51,42 @@ async function getHtml(path) {
   return body;
 }
 
-// 列表卡片：<a href="...view_video.php?viewkey=XXX..."> … <img src=thumb> … <span class="video-title">标题</span> … </a>
+// 列表页同一个视频会出现多次（44 张卡只有 24 个 viewkey），
+// 而且旧的 HTML 里 <a> 标签不保证闭合，按 </a> 切分会把「下一张卡的标题」配到「上一张卡的 id」，
+// 结果就是点封面进去是别的视频。这里改成以 viewkey 为边界切区间，每张卡只在自己的区间里取字段。
 function parseCards(html) {
-  const out = [];
-  const seen = {};
-  // 列表入口有 view_video.php 和 view_video_hd.php 两种（高清分类用后者）
-  const re = /<a[^>]+href="[^"]*view_video[a-z_]*\.php\?viewkey=([0-9a-f]{12,32})[^"]*"([\s\S]{0,1500}?)<\/a>/g;
+  const marks = [];
+  const reKey = /viewkey=([0-9a-f]{12,32})/g;
   let m;
-  while ((m = re.exec(html)) !== null) {
-    const id = m[1];
-    if (seen[id]) continue;
-    const block = m[2];
-    const t = block.match(/class="video-title[^"]*"[^>]*>([\s\S]*?)<\/span>/);
+  while ((m = reKey.exec(html)) !== null) marks.push({ id: m[1], at: m.index });
+
+  const out = [];
+  const seenThumb = {};
+  const seenId = {};
+  for (let i = 0; i < marks.length; i++) {
+    const start = marks[i].at;
+    const end = i + 1 < marks.length ? marks[i + 1].at : Math.min(html.length, start + 2000);
+    const seg = html.slice(start, end);
+
+    const t = seg.match(/class="video-title[^"]*"[^>]*>([\s\S]*?)<\/span>/);
     const title = t ? clean(t[1]) : '';
     if (!title) continue;
-    seen[id] = 1;
-    const img = block.match(/<img[^>]+src="([^"]+)"/);
-    const dur = block.match(/class="duration"[^>]*>([^<]+)</);
+
+    const img = seg.match(/<img[^>]+src="([^"]+)"/);
+    const cover = img ? img[1] : '';
+    const thumbId = (cover.match(/\/thumb\/(\d+)\./) || [])[1] || '';
+
+    // 同一张缩略图 = 同一个视频，只保留第一次出现的那张卡
+    const dk = thumbId || marks[i].id;
+    if (seenThumb[dk] || seenId[marks[i].id]) continue;
+    seenThumb[dk] = 1;
+    seenId[marks[i].id] = 1;
+
+    const dur = seg.match(/class="duration"[^>]*>([^<]+)</);
     out.push({
-      id: id,
+      id: marks[i].id,
       title: title,
-      cover: img ? img[1] : '',
+      cover: cover,
       remarks: dur ? clean(dur[1]) : ''
     });
   }
@@ -89,15 +104,6 @@ function listPath(id, page) {
   return n <= 1 ? base : base + '&page=' + n;
 }
 
-// 详情页里解出真正的 <source src='...'>
-function decodeSource(html) {
-  const m = html.match(/strencode2\(\s*"([^"]+)"\s*\)/);
-  if (!m) return '';
-  let text = m[1];
-  try { text = decodeURIComponent(text); } catch (e) { /* 保持原样 */ }
-  const s = text.match(/src\s*=\s*['"]([^'"]+)['"]/);
-  return s ? s[1] : '';
-}
 
 function detailMeta(html) {
   const t = html.match(/<title[^>]*>([\s\S]*?)<\/title>/);
@@ -106,6 +112,41 @@ function detailMeta(html) {
   const poster = html.match(/<video[^>]*poster="([^"]+)"/);
   const dur = html.match(/<span class="duration">([^<]+)<\/span>/);
   return { title: title, poster: poster ? poster[1] : '', duration: dur ? clean(dur[1]) : '' };
+}
+
+// 详情页里可能有多条源：正常的 <source>、被 <!-- --> 包住的备用源、以及 strencode2 编码的那条。
+// 全部解出来，后面逐个探测。
+function decodeSources(html) {
+  const urls = [];
+  function push(u) {
+    if (u && u.indexOf('http') === 0 && urls.indexOf(u) < 0) urls.push(u);
+  }
+  const reEnc = /strencode2\(\s*"([^"]+)"\s*\)/g;
+  let m;
+  while ((m = reEnc.exec(html)) !== null) {
+    let t = m[1];
+    try { t = decodeURIComponent(t); } catch (e) { /* 保持原样 */ }
+    const s = t.match(/src\s*=\s*['"]([^'"]+)['"]/);
+    if (s) push(s[1]);
+  }
+  const reSrc = /<source[^>]+src="([^"]+\.(?:mp4|m3u8)[^"]*)"/g;
+  while ((m = reSrc.exec(html)) !== null) push(m[1]);
+  return urls;
+}
+
+// 探测一个地址是否能取到数据：2xx/3xx 算可用；网络错误/超时返回 0（不判死，交给播放器试）
+async function probe(url) {
+  try {
+    const r = await host.http.request({
+      url: url,
+      headers: { 'Referer': SITE + '/', 'Range': 'bytes=0-0' },
+      timeout: 9000,
+      redirect: 'follow'
+    });
+    return r.status || 0;
+  } catch (e) {
+    return 0;
+  }
 }
 
 export default {
@@ -170,14 +211,29 @@ export default {
     const id = String(input.episodeId || input.id || '').match(/[0-9a-f]{12,32}/);
     if (!id) throw host.error('E_NOT_FOUND', '缺少 viewkey');
     const html = await getHtml('/view_video.php?viewkey=' + id[0]);
-    const url = decodeSource(html);
-    if (!url || url.indexOf('http') !== 0) throw host.error('E_UNSUPPORTED', '没有找到可播放的直链');
-    return {
-      streams: [{
-        name: 'MP4',
-        url: url,
-        format: 'mp4'
-      }]
-    };
+
+    const candidates = decodeSources(html);
+    if (!candidates.length) throw host.error('E_UNSUPPORTED', '页面里没有找到播放地址');
+
+    const streams = [];
+    let lastStatus = 0;
+    for (let i = 0; i < candidates.length && i < 4; i++) {
+      const u = candidates[i];
+      const st = await probe(u);
+      if (st === 0 || (st >= 200 && st < 400)) {
+        streams.push({
+          name: '线路' + (i + 1),
+          url: u,
+          format: /\.m3u8(\?|$)/.test(u) ? 'hls' : 'mp4',
+          headers: { 'Referer': SITE + '/', 'User-Agent': UA }
+        });
+      } else {
+        lastStatus = st;
+      }
+    }
+    if (!streams.length) {
+      throw host.error('E_HTTP', '视频源暂时不可用' + (lastStatus ? '（HTTP ' + lastStatus + '）' : ''));
+    }
+    return { streams: streams };
   }
 };
