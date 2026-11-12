@@ -31,7 +31,9 @@ targets:
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.local.STV
       GENERATE_INFOPLIST_FILE: YES
-      MARKETING_VERSION: "1.5"
+      # 版本规则：每次功能更新 MARKETING_VERSION +0.1（1.6 → 1.7 → 1.8 …），
+      # CURRENT_PROJECT_VERSION 同步 +1。TrollStore 靠 build 号判断覆盖安装，两个都要涨。
+      MARKETING_VERSION: "1.6"
       CURRENT_PROJECT_VERSION: "13"
       SWIFT_EMIT_LOC_STRINGS: YES
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
