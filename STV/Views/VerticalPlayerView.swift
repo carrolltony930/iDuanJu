@@ -523,6 +523,17 @@ struct PlayerScreen: View {
 
     private var moreMenu: some View {
         Menu {
+            // 音轨 / 字幕 / 弹幕 从底部图标行移到这里（右上角选项菜单）。
+            Button { toggle(.audio) } label: { Label("音轨", systemImage: "waveform") }
+                .accessibilityIdentifier("player.audio")
+            Button { toggle(.subtitles) } label: { Label("字幕", systemImage: "text.bubble") }
+                .accessibilityIdentifier("player.subtitles")
+            Toggle(isOn: Binding(get: { danmaku.enabled && series.source == .hongguo }, set: { on in
+                guard series.source == .hongguo else { showOSD("当前片源不支持弹幕"); return }
+                danmaku.enabled = on; flashChrome()
+            })) { Label("弹幕", systemImage: "text.bubble.fill") }
+                .accessibilityIdentifier("player.danmaku")
+            Divider()
             Toggle(isOn: $showTech) { Label("技术信息", systemImage: "info.circle") }
             Toggle(isOn: Binding(get: { co.autoNext }, set: { co.autoNext = $0 })) { Label("自动连播", systemImage: "repeat") }
             Button { fillScreen.toggle(); showOSD(fillScreen ? "画面：铺满全屏" : "画面：完整自适应") } label: {
@@ -613,16 +624,6 @@ struct PlayerScreen: View {
                 else { Text(SpeedPopover.label(co.playbackRate)).font(.system(size: 14, weight: .bold)).foregroundStyle(STVTheme.accent) }
             } }
             slot { PlayerRowIcon(id: "player.quality", a11y: "画质与播放源", active: panel == .quality, action: { toggle(.quality) }) { OutlinedTag(text: qualityTag) } }
-            slot { PlayerRowIcon(id: "player.audio", a11y: "音轨", active: panel == .audio, action: { toggle(.audio) }) {
-                Image(systemName: "waveform").font(.system(size: 19))
-            } }
-            slot { PlayerRowIcon(id: "player.subtitles", a11y: "字幕", active: panel == .subtitles, action: { toggle(.subtitles) }) {
-                Image(systemName: "text.bubble").font(.system(size: 19))
-            } }
-            slot { PlayerRowIcon(id: "player.danmaku", a11y: danmaku.enabled ? "关闭弹幕" : "开启弹幕", action: {
-                guard series.source == .hongguo else { showOSD("当前片源不支持弹幕"); return }
-                danmaku.enabled.toggle(); flashChrome()
-            }) { DanmakuGlyph(on: danmaku.enabled && series.source == .hongguo).opacity(series.source == .hongguo ? 1 : 0.4) } }
             slot { PlayerRowIcon(id: "player.episodes", a11y: "选集", active: panel == .episodes, action: { toggle(.episodes) }) {
                 Image(systemName: "square.grid.2x2").font(.system(size: 19))
             } }

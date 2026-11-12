@@ -179,8 +179,7 @@ final class PlayerUITests: XCTestCase {
 
     // MARK: v3 popovers & orientation (4-part test-pattern long video, chrome pinned)
 
-    static let icons = ["player.rate", "player.quality", "player.audio", "player.subtitles",
-                        "player.danmaku", "player.episodes", "player.fullscreen"]
+    static let icons = ["player.rate", "player.quality", "player.episodes", "player.fullscreen"]
 
     func launchV3() {
         launch(["STV_FX_EPISODES": "4", "STV_FX_TITLE": "测试图案合集", "STV_KEEP_CHROME": "1"])
@@ -197,7 +196,7 @@ final class PlayerUITests: XCTestCase {
     func testV3IconsAndPopoversPortrait() {
         launchV3()
         XCTAssertTrue(waitOrientation(landscape: false))
-        // Seven equally spaced icons in one row.
+        // Four equally spaced icons in one row (音轨/字幕/弹幕 now live in the 更多 menu).
         let frames = Self.icons.map { id -> CGRect in XCTAssertTrue(el(id).waitForExistence(timeout: 4), id); return el(id).frame }
         let ys = frames.map(\.midY), xs = frames.map(\.midX)
         XCTAssertLessThan((ys.max()! - ys.min()!), 2, "icons not on one row")
@@ -239,9 +238,18 @@ final class PlayerUITests: XCTestCase {
         XCTAssertTrue(popoverGone("player.popover.episodes"))
 
         // Only one popover at a time; same icon toggles closed.
+        el("player.quality").tap()
+        XCTAssertTrue(el("player.popover.quality").waitForExistence(timeout: 3))
+        el("player.quality").tap()
+        XCTAssertTrue(popoverGone("player.popover.quality"), "same icon did not toggle closed")
+
+        // 音轨 / 字幕 / 弹幕 moved into the top-right 更多 menu.
+        el("player.more").tap()
+        XCTAssertTrue(el("player.audio").waitForExistence(timeout: 3), "音轨 missing from 更多 menu")
+        XCTAssertTrue(el("player.subtitles").exists, "字幕 missing from 更多 menu")
         el("player.audio").tap()
         XCTAssertTrue(el("player.popover.audio").waitForExistence(timeout: 3))
-        el("player.audio").tap()
+        scrimTap(landscape: false)
         XCTAssertTrue(popoverGone("player.popover.audio"))
     }
 
