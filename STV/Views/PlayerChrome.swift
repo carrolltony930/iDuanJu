@@ -250,22 +250,26 @@ struct PlayerPill: View {
 struct PlayerSpeedHUD: View {
     var rate: Double
 
+    /// 参考常规播放器：深色胶囊 + 快进图标 +「2 倍速」，不带「播放中」。
+    private var rateNumber: String {
+        PlaybackCoordinator.formatRate(rate).replacingOccurrences(of: "x", with: "")
+    }
+
     var body: some View {
-        // 常规播放器的倍速提示：小号深色胶囊，字号约 15pt，不抢画面。
-        HStack(spacing: 6) {
-            Image(systemName: "gauge.with.dots.needle.67percent")
-                .font(.system(size: 13, weight: .semibold))
-            Text(PlaybackCoordinator.formatRate(rate))
-                .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
+        HStack(spacing: 12) {
+            Image(systemName: "forward.fill")
+                .font(.system(size: 18, weight: .bold))
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(rateNumber)
+                    .font(.system(size: 22, weight: .heavy, design: .rounded).monospacedDigit())
+                Text("倍速")
+                    .font(.system(size: 18, weight: .semibold))
+            }
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(.white.opacity(0.15), lineWidth: 0.6)
-        )
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(.black.opacity(0.72), in: Capsule())
         .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
     }
 }
