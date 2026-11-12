@@ -215,17 +215,6 @@ struct OutlinedTag: View {
     }
 }
 
-struct DanmakuGlyph: View {
-    let on: Bool
-    var body: some View {
-        Text("弹").font(.system(size: 13, weight: .bold))
-            .foregroundStyle(on ? .black : .white)
-            .frame(width: 22, height: 22)
-            .background(on ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 5))
-            .overlay { if !on { RoundedRectangle(cornerRadius: 5).strokeBorder(.white, lineWidth: 1.2) } }
-    }
-}
-
 // MARK: Popovers
 
 struct PlayerPopoverRow: View {
