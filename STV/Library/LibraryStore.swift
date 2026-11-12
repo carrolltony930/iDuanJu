@@ -46,6 +46,11 @@ final class LibraryStore {
     }
 
     func removeProgress(_ s: HGSeries) { progress[s.id] = nil; save(progress, "stv.progress") }
+    /// Clears the visible history (hidden / locked sources keep theirs, like continueWatching).
+    func clearHistory() {
+        for p in continueWatching { progress[p.series.id] = nil }
+        save(progress, "stv.progress")
+    }
 
     func isFavorite(_ s: HGSeries) -> Bool { allFavorites.contains { $0.id == s.id } }
 

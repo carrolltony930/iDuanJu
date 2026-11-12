@@ -10,8 +10,8 @@ android {
         applicationId = "app.iduanju"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1505
-        versionName = "1.5.5-android"
+        versionCode = 1506
+        versionName = "1.5.6-android"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {

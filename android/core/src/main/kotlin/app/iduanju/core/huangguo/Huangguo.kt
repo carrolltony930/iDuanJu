@@ -240,15 +240,38 @@ class HuangguoClient(private val dir: File? = null, private val prefs: MutableMa
         return rows.mapNotNull { r -> val id = r.str("id"); val n = r.str("name"); if (id.isEmpty()) null else HuangguoChannel(HuangguoSub.legacy, id, n.ifEmpty { id }) }
     }
 
+    /**
+     * 视频站 and AI 站 have real site search (huangguo.video `/search?q=`, AI mirror `/api/search?q=`); the old
+     * "first page of a few catalogs, then title contains" scan missed almost everything (issue #2 / #3).
+     * The legacy App 源 has no search endpoint, so it keeps the catalog scan. Same as iOS HuangguoClient.search.
+     */
     fun search(q: String): List<HGSeries> {
         val needle = q.trim().lowercase(); if (needle.isEmpty()) return emptyList()
-        val jobs = aiChannels.filter { !it.isRank }.map { ch -> { list(ch, 1).items } } + listOf({ list(videoChannels[0], 1).items }, {
-            legacyChannels().take(6).flatMap { runCatching { list(it, 1).items }.getOrDefault(emptyList()) } })
+        val enc = java.net.URLEncoder.encode(q.trim(), "UTF-8").replace("+", "%20")
+        val jobs: List<() -> List<HGSeries>> = listOf(
+            {
+                val page = "$videoBase/search?q=$enc"
+                val h = text(page, "$videoBase/")
+                // Only the results section: the page also links trending titles elsewhere.
+                val body = h.indexOf("id=\"search-content\"").let { if (it >= 0) h.substring(it) else h }
+                parseVideoCards(body.indexOf("</section>").let { if (it >= 0) body.substring(0, it) else body }, page)
+            },
+            {
+                val base = ensureAIBase(); val out = ArrayList<HGSeries>()
+                for (p in 1..2) {
+                    val o = JSONTokenerAny(fetch("$base/api/search?q=$enc&page=$p&size=24", "$base/"))
+                    val items = aiJSONCards(o, base); out += items
+                    val pages = ((o as? org.json.JSONObject)?.optJSONObject("data")?.optJSONObject("pagination")?.optInt("pages")) ?: 0
+                    if (items.size < 24 || p >= pages) break
+                }
+                out
+            },
+            { legacyChannels().take(6).flatMap { runCatching { list(it, 1).items }.getOrDefault(emptyList()) }.filter { it.title.lowercase().contains(needle) } },
+        )
         val pool = Executors.newFixedThreadPool(jobs.size)
         val res = try { pool.invokeAll(jobs.map { j -> java.util.concurrent.Callable { runCatching(j) } }, 40, TimeUnit.SECONDS).map { runCatching { it.get() }.getOrElse { Result.failure(it) } } } finally { pool.shutdownNow() }
-        val all = res.flatMap { it.getOrDefault(emptyList()) }
-        val hits = all.filter { it.title.lowercase().contains(needle) }.distinctBy { it.seriesId }
-        if (hits.isEmpty() && all.isEmpty()) res.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw ProviderException.upstream(it.message ?: "黄果搜索失败") }
+        val hits = res.flatMap { it.getOrDefault(emptyList()) }.filter { !blocked(it.title, it.subtitle, *it.tags.toTypedArray()) }.distinctBy { it.seriesId }
+        if (hits.isEmpty() && res.all { it.isFailure }) res.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw ProviderException.upstream(it.message ?: "黄果搜索失败") }
         return hits
     }
 

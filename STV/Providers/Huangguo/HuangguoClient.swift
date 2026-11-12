@@ -187,25 +187,50 @@ actor HuangguoClient {
         }
     }
 
-    /// Gateway search = scan catalogs then match titles.
+    /// 视频站 and AI 站 have real site search (huangguo.video `/search?q=`, AI mirror `/api/search?q=`); the old
+    /// "first page of a few catalogs, then title contains" scan missed almost everything (issue #2 / #3).
+    /// The legacy App 源 has no search endpoint, so it keeps the catalog scan.
     func search(_ q: String) async throws -> [HGSeries] {
         let needle = q.lowercased().trimmingCharacters(in: .whitespaces)
         guard !needle.isEmpty else { return [] }
-        var pool: [HGSeries] = []
+        let enc = q.trimmingCharacters(in: .whitespaces).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? needle
+        var groups: [[HGSeries]] = [[], [], []]
         var errors: [String] = []
-        await withTaskGroup(of: Result<[HGSeries], Error>.self) { g in
-            for ch in Self.aiChannels where !ch.isRank { g.addTask { await Self.attempt { try await self.list(ch, page: 1).items } } }
-            g.addTask { await Self.attempt { try await self.list(Self.videoChannels[0], page: 1).items } }
-            g.addTask { await Self.attempt {
+        await withTaskGroup(of: (Int, Result<[HGSeries], Error>).self) { g in
+            g.addTask { (0, await Self.attempt {
+                let page = Self.videoBase + "/search?q=" + enc
+                let h = try await self.text(page, referer: Self.videoBase + "/")
+                // Only the results section: the page also links trending titles elsewhere.
+                let body = h.range(of: "id=\"search-content\"").map { String(h[$0.lowerBound...]) } ?? h
+                let section = body.range(of: "</section>").map { String(body[..<$0.lowerBound]) } ?? body
+                return await self.parseVideoCards(section, pageURL: page)
+            }) }
+            g.addTask { (1, await Self.attempt {
+                let base = try await self.ensureAIBase()
+                var out: [HGSeries] = []
+                for p in 1...2 {
+                    let d = try await self.fetch("\(base)/api/search?q=\(enc)&page=\(p)&size=24", referer: base + "/")
+                    let obj = try JSONSerialization.jsonObject(with: d)
+                    let items = await self.aiJSONCards(obj, base: base)
+                    out += items
+                    let pages = J.int(J.dict(J.dict((obj as? [String: Any])?["data"])["pagination"])["pages"])
+                    if items.count < 24 || p >= pages { break }
+                }
+                return out
+            }) }
+            g.addTask { (2, await Self.attempt {
                 var out: [HGSeries] = []
                 for ch in try await self.legacyChannels().prefix(6) { out += (try? await self.list(ch, page: 1).items) ?? [] }
-                return out
-            } }
-            for await r in g { switch r { case .success(let s): pool += s; case .failure(let e): errors.append(e.localizedDescription) } }
+                return out.filter { $0.title.lowercased().contains(needle) }
+            }) }
+            for await (i, r) in g {
+                switch r { case .success(let s): groups[i] = s; case .failure(let e): errors.append(e.localizedDescription) }
+            }
         }
         var seen = Set<String>()
-        let hits = pool.filter { $0.title.lowercased().contains(needle) && seen.insert($0.id).inserted }
-        if hits.isEmpty && pool.isEmpty, let e = errors.first { throw ProviderError.upstream(e) }
+        // Same rule as Android HuangguoClient.blocked: never return minors / non-consent titles.
+        let hits = groups.joined().filter { !Self.blocked($0) && seen.insert($0.id).inserted }
+        if hits.isEmpty, errors.count == groups.count, let e = errors.first { throw ProviderError.upstream(e) }
         return hits
     }
 
@@ -327,6 +352,14 @@ actor HuangguoClient {
         let note = streams.contains { $0.kind == .hlsAES && $0.key.isEmpty } ? "加密 HLS 未能取到密钥" : nil
         return HGResolvedVideo(vid: episode.vid, url: streams.first?.url, key: streams.first?.key, duration: duration,
                                expiresAt: nil, err: nil, streams: streams, note: note)
+    }
+
+    /// Same rule as Android HuangguoClient.blocked: the shared ContentFilter (minors) plus non-consent themes.
+    static let nonConsent = ["强奸", "強姦", "强暴", "強暴", "迷奸", "迷姦", "轮奸", "輪姦", "下药", "下藥", "迷药", "迷藥", "催眠", "胁迫", "脅迫", "强迫", "強迫", "被迫",
+                            "肉偿", "肉償", "凌辱", "侵犯", "猥亵", "猥褻", "非自愿", "囚禁", "绑架", "綁架", "偷拍", "盗摄", "醉奸", "睡奸", "性奴", "调教", "調教", "rape", "forced", "drugged", "hypno"]
+    static func blocked(_ s: HGSeries) -> Bool {
+        let t = [s.title, s.subtitle ?? ""]
+        return ContentFilter.isBlocked(t) || t.contains { x in nonConsent.contains { x.localizedCaseInsensitiveContains($0) } }
     }
 
     static func attempt<T: Sendable>(_ f: @Sendable () async throws -> T) async -> Result<T, Error> {

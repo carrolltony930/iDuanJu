@@ -74,16 +74,31 @@ struct STVApp: App {
 enum DebugRoute {
     case root(Int), detail(String), search(String), searchEdit, actorRank, profile
     /// Multi-source hooks: `site:<source>:<id>`, `siteplay:<source>:<id>`, `board:<source>:<categoryId>`, `sources`, `licenses`.
-    case site(DramaSource, String, play: Bool), board(DramaSource, String), sources, licenses, siteLog, plugins
+    case site(DramaSource, String, play: Bool), board(DramaSource, String), sources, licenses, siteLog, plugins, history
     /// `fxplay:/abs/file.mp4` — player on a local test stream (UI tests for orientation / progress bar).
     case fixturePlay(String)
     /// `tgplay:<channel>/<msgId>/<mediaIndex>` — a public channel video (t.me/s) straight in the player.
     case tgPlay(String)
+    #if DEBUG
+    nonisolated(unsafe) private static var seededWatch = false
+    #endif
     static var current: DebugRoute? {
         let env = ProcessInfo.processInfo.environment
         if let seed = env["STV_SEED_HISTORY"], !seed.isEmpty {
             MainActor.assumeIsolated { seed.split(separator: ",").reversed().forEach { LibraryStore.shared.addSearch(String($0)) } }
         }
+        #if DEBUG
+        // `STV_SEED_WATCH=N`: N fake 观看历史 records (UI tests for deleting records).
+        if let n = env["STV_SEED_WATCH"].flatMap(Int.init), n > 0, !seededWatch {
+            seededWatch = true   // `current` is re-read on every render: seed once, or deletions come back
+            MainActor.assumeIsolated {
+                for i in 0..<n {
+             let s = HGSeries(seriesId: "seed\(i)", title: "测试记录 \(i + 1)", cover: "", episodeCount: 10)
+             LibraryStore.shared.record(s, index: i % 10, ep: i % 10 + 1, seconds: Double(30 + i), duration: 120)
+                }
+            }
+        }
+        #endif
         guard let raw = env["STV_ROUTE"], !raw.isEmpty else { return nil }
         let parts = raw.split(separator: ":", maxSplits: 1).map(String.init)
         let arg = parts.count > 1 ? parts[1] : ""
@@ -98,6 +113,7 @@ enum DebugRoute {
         // Multi-source hooks are simulator-only: in Release they would bypass 片源管理 (hidden adult sources).
         case "sources": return .sources
         case "licenses": return .licenses
+        case "history": return .history
         case "plugins": return .plugins
         case "sitelog": return .siteLog
         case "fxplay": return .fixturePlay(arg)
@@ -128,6 +144,7 @@ struct DebugRouteHost: View {
         case .profile: NavigationStack { ProfileView().routes() }
         case .sources: NavigationStack { SourcesView().routes() }
         case .licenses: NavigationStack { LicensesView().routes() }
+        case .history: NavigationStack { LibraryListView(kind: .history).routes() }
         case .plugins: NavigationStack { PluginsView().routes() }
         case .siteLog: NavigationStack { SiteLogView().routes() }
         case .fixturePlay(let path):

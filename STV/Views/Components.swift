@@ -360,6 +360,7 @@ struct ContinueRow: View {
                                 Text(p.series.title).font(.caption).foregroundStyle(STVTheme.text).lineLimit(1).frame(width: 112, alignment: .leading)
                             }
                         }.buttonStyle(.plain)
+                        .contextMenu { Button("删除观看记录", systemImage: "trash", role: .destructive) { LibraryStore.shared.removeProgress(p.series) } }
                     }
                 }.padding(.horizontal, 16)
             }
