@@ -275,7 +275,17 @@ struct PlayerScreen: View {
         .onChange(of: co.current) { _, _ in scrubbing = false; flashChrome() }
         .onChange(of: co.readyIndex) { _, index in if index != nil { flashChrome() } }
         .onChange(of: landscape) { _, l in if !l { locked = false }; panel = nil }
-        .sheet(item: $verifyTarget) { t in SiteVerifySheet(target: t) { if let c = co.current { co.activate(c) } } }
+        .sheet(item: $verifyTarget) { t in
+            // 插件源用它自己的 WKWebsiteDataStore：验证后的 cookie 直接进插件 jar。
+            if t.source.rawValue.hasPrefix("p.") {
+                PluginVerifySheet(pluginID: String(t.source.rawValue.dropFirst(2)),
+                                  url: URL(string: t.url) ?? URL(string: "https://127.0.0.1")!) {
+                    if let c = co.current { co.activate(c) }
+                }
+            } else {
+                SiteVerifySheet(target: t) { if let c = co.current { co.activate(c) } }
+            }
+        }
         .sheet(isPresented: $danmakuSheet, onDismiss: flashChrome) {
             DanmakuSettingsSheet(available: series.source == .hongguo)
                 .presentationDragIndicator(.visible).presentationBackground(STVTheme.surface)

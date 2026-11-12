@@ -179,17 +179,37 @@ export default {
       embCache[id] = { u: embed, t: Date.now() };
     }
 
-    // 2) 先按域名分流：DoodStream 系 embed（playmogo / mmsi / dood）挂了 Turnstile 人机验证，
-    //    插件和播放器都过不去，直接给一句人话，别让它变成「域名未授权」。
+    // 2) 按域名分流：DoodStream 系 embed（playmogo / mmsi / dood）的 Turnstile 要点「播放」才出现，
+    //    宿主的自动过验证流程看不到它，所以先请 App 弹一次「去验证」：用户在插件专属 webview 里
+    //    点播放、过人机验证，cookie 存进插件 jar，回来重试就能取到直链。
     const embHost = (String(embed).match(/^https?:\/\/([^\/]+)/) || [])[1] || '';
-    if (/(playmogo|mmsi\d*|dood|ds2play|d000d|doodstream)/i.test(embHost)) {
-      throw host.error('E_UNSUPPORTED', '这个视频托管在 DoodStream，需要人机验证，暂不支持');
-    }
+    const isDood = /(playmogo|mmsi\d*|dood|ds2play|d000d|doodstream)/i.test(embHost);
 
-    // 3) embed 页 → 解开 packer（宿主的 unpackPacker 只做字符串替换，不执行远程 JS）
-    const page = await req(embed);
-    if (/turnstile|g-recaptcha|DoodStream/i.test(page)) {
-      throw host.error('E_UNSUPPORTED', '这个视频需要人机验证，暂不支持');
+    // 3) 取 embed 页（宿主遇到 Cloudflare 挑战会自动后台验证）
+    const page = await req(embed, { cloudflare: 'auto' });
+
+    if (isDood) {
+      const direct = page.match(/https?:\/\/[^\s"'<>]+\.(?:m3u8|mp4)[^\s"'<>]*/i);
+      if (direct) {
+        const u = direct[0].replace(/\\\//g, '/');
+        host.log('play ' + id + ' → DoodStream 直链');
+        host.log('  ' + u);
+        return {
+          streams: [{
+            name: '线路1',
+            url: u,
+            format: /\.m3u8/i.test(u) ? 'hls' : 'mp4',
+            headers: { 'Referer': embed, 'User-Agent': UA }
+          }]
+        };
+      }
+      const key = 'verify:' + id;
+      const tried = host.storage.get(key);
+      if (!tried) {
+        host.storage.set(key, 1);
+        throw host.error('E_VERIFY', embed);
+      }
+      throw host.error('E_UNSUPPORTED', '人机验证后仍拿不到地址（该视频可能已失效）');
     }
     let text = '';
     try { text = String(host.codec.unpackPacker(page) || ''); } catch (e) { text = ''; }

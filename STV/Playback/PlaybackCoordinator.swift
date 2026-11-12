@@ -592,6 +592,12 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
                 guard activation == token else { return }
                 errors[i] = error.localizedDescription
                 verifyTargets[i] = error.verifyTarget
+                // 插件也能请求一次站点验证：E_VERIFY 的 message 是要打开的地址。
+                if verifyTargets[i] == nil, let pe = error as? PluginError,
+                   case .runtime(let code, let msg) = pe, code == "E_VERIFY",
+                   let u = URL(string: msg), u.scheme == "https" {
+                    verifyTargets[i] = VerifyTarget(source: series.source, url: u.absoluteString)
+                }
             }
         }
     }

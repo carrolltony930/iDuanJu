@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "com.idj.mm7tv",
   "name": "7MMTV",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": { "name": "carrolltony930" },
   "description": "7mmtv.sx（7mm 線上AV）：有碼/無碼/中字/素人/國產/直播，繁體中文界面 + 番號搜索，VidHide HLS（480p/720p/1080p）。",
   "type": "video",
@@ -11,9 +11,9 @@
   "minAppVersion": "1.5",
   "entry": "main.js",
   "permissions": {
-    "http": ["7mmtv.sx", "*.7mmtv.sx", "mmvh02.com", "*.mmvh02.com"],
+    "http": ["7mmtv.sx", "*.7mmtv.sx", "mmvh02.com", "*.mmvh02.com", "playmogo.com", "*.playmogo.com", "mmsi02.com", "*.mmsi02.com"],
     "media": ["*.acek-cdn.com", "*.quantumcomputinghub.space", "*.1024cdn.sx", "*.1026cdn.sx", "pixibay.cc", "*.pixibay.cc"],
-    "cloudflare": false,
+    "cloudflare": true,
     "storage": true,
     "login": false
   },
