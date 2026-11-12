@@ -134,20 +134,6 @@ function decodeSources(html) {
   return urls;
 }
 
-// 探测一个地址是否能取到数据：2xx/3xx 算可用；网络错误/超时返回 0（不判死，交给播放器试）
-async function probe(url) {
-  try {
-    const r = await host.http.request({
-      url: url,
-      headers: { 'Referer': SITE + '/', 'Range': 'bytes=0-0' },
-      timeout: 9000,
-      redirect: 'follow'
-    });
-    return r.status || 0;
-  } catch (e) {
-    return 0;
-  }
-}
 
 export default {
   async home() {
@@ -215,25 +201,29 @@ export default {
     const candidates = decodeSources(html);
     if (!candidates.length) throw host.error('E_UNSUPPORTED', '页面里没有找到播放地址');
 
+    // 站点的地址路径是 //mp43/...（双斜杠）。Safari 会容错，但 AVFoundation 不一定，
+    // 所以同时给一条单斜杠版本作为备用线路，播放器里可以手动切换。
     const streams = [];
-    let lastStatus = 0;
-    for (let i = 0; i < candidates.length && i < 4; i++) {
+    const seen = {};
+    function add(name, u) {
+      if (!u || u.indexOf('https://') !== 0 || seen[u]) return;
+      seen[u] = 1;
+      streams.push({
+        name: name,
+        url: u,
+        format: /\.m3u8(\?|$)/.test(u) ? 'hls' : 'mp4',
+        headers: { 'Referer': SITE + '/' }
+      });
+    }
+    for (let i = 0; i < candidates.length && i < 2; i++) {
       const u = candidates[i];
-      const st = await probe(u);
-      if (st === 0 || (st >= 200 && st < 400)) {
-        streams.push({
-          name: '线路' + (i + 1),
-          url: u,
-          format: /\.m3u8(\?|$)/.test(u) ? 'hls' : 'mp4',
-          headers: { 'Referer': SITE + '/', 'User-Agent': UA }
-        });
-      } else {
-        lastStatus = st;
+      add('线路' + (streams.length + 1), u);
+      // 只对第一条第路径里的重复斜杠做一次归一化
+      if (i === 0 && /\/\/[^/]/.test(u.replace(/^https:\/\//, ''))) {
+        add('线路' + (streams.length + 1) + ' 单斜杠', u.replace(/^https:\/\/([^/]+)\/\//, 'https://$1/'));
       }
     }
-    if (!streams.length) {
-      throw host.error('E_HTTP', '视频源暂时不可用' + (lastStatus ? '（HTTP ' + lastStatus + '）' : ''));
-    }
+    if (!streams.length) throw host.error('E_UNSUPPORTED', '没有可用的 https 播放地址');
     return { streams: streams };
   }
 };
