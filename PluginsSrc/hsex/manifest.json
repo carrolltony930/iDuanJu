@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "com.idj.hsex",
   "name": "好色 TV",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "author": { "name": "carrolltony930" },
   "description": "hsex.icu（好色™ Tv）：最新/周榜/月榜/时长筛选 + 搜索 + HLS 多线路。单集长视频。",
   "type": "video",
