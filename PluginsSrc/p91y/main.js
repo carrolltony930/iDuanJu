@@ -121,7 +121,12 @@ function parseDetail(html, id) {
   if (cover.indexOf('//') === 0) cover = 'https:' + cover;
   // HTML 属性里的 & 是 &amp;，不解码会污染 m3u8 的 query（t=…&amp;m=…）
   const unescape = function (s) { return String(s || '').replace(/&amp;/g, '&').replace(/&#x2F;/g, '/'); };
-  return { src: unescape(v ? v[1] : ''), cover: unescape(cover), title: title || id, desc: desc ? clean(desc[1]).substring(0, 160) : '' };
+  let src = unescape(v ? v[1] : '');
+  // 站点的 data-src 有时是协议相对地址「//cdn2.jiuse2.cloud/…」，
+  // 直接交给播放器会因为「不是 https」被丢弃，这里补上 scheme。
+  if (src.indexOf('//') === 0) src = 'https:' + src;
+  if (src && src.indexOf('http') !== 0 && src.indexOf('//') > 0) src = 'https://' + src.replace(/^.*?\/\//, '');
+  return { src: src, cover: unescape(cover), title: title || id, desc: desc ? clean(desc[1]).substring(0, 160) : '' };
 }
 
 function detailPath(id) {
