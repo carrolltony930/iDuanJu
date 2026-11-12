@@ -216,8 +216,15 @@ struct PlayerScreen: View {
                     }
                     // Native iOS volume HUD is used instead (see PlayerAdjust.swift).
                     if speedMode {
-                        PlayerSpeedHUD(rate: previewRate)
-                            .position(x: full.width / 2, y: full.height / 2).allowsHitTesting(false)
+                        VStack(alignment: .leading, spacing: 0) {
+                            PlayerSpeedHUD(rate: previewRate)
+                                .padding(.leading, 14)
+                                .padding(.top, landscape ? 12 : ins.top + 46)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
                     }
                 }
                 .frame(width: full.width, height: full.height)
