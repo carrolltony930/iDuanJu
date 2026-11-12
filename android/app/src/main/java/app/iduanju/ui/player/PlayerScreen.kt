@@ -74,6 +74,18 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit, onSwitchSer
     var danmaku by remember { mutableStateOf(true) }
     var quality by remember { mutableStateOf<String?>(null) }
     var fillMode by remember { mutableStateOf(false) }
+    val activity = ctx as? android.app.Activity
+    val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    fun setLandscape(on: Boolean) {
+        activity?.requestedOrientation = if (on) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    }
+    androidx.activity.compose.BackHandler(enabled = landscape) { setLandscape(false) }
+    LaunchedEffect(landscape) {
+        val w = activity?.window ?: return@LaunchedEffect
+        val ic = androidx.core.view.WindowCompat.getInsetsController(w, w.decorView)
+        ic.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (landscape) ic.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars()) else ic.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+    }
     var tags by remember { mutableStateOf(TechTags()) }
     var retry by remember { mutableIntStateOf(0) }
 
@@ -159,6 +171,8 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit, onSwitchSer
     LaunchedEffect(seekHint) { if (seekHint != null) { delay(700); seekHint = null } }
     DisposableEffect(Unit) {
         onDispose {
+            activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            activity?.window?.let { w -> androidx.core.view.WindowCompat.getInsetsController(w, w.decorView).show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
             detail?.let { d -> d.episodes.getOrNull(epIndex)?.let { ep ->
                 lib.record(WatchProgress(seriesId, d.title, d.cover, epIndex, ep.ep, pos / 1000.0, dur / 1000.0, System.currentTimeMillis()))
             } }
@@ -319,7 +333,7 @@ fun PlayerScreen(seriesId: String, startEp: Int, onBack: () -> Unit, onSwitchSer
                         ToolIcon(Icons.AutoMirrored.Filled.Chat, "字幕") {}
                         Box(Modifier.clickable { danmaku = !danmaku }) { BoxedTag("弹", filled = danmaku) }
                         ToolIcon(Icons.Filled.GridView, "选集") { showEpisodes = true }
-                        ToolIcon(if (fillMode) Icons.Filled.FullscreenExit else Icons.Filled.OpenInFull, "画面") { fillMode = !fillMode }
+                        if (landscape) ToolIcon(Icons.Filled.FullscreenExit, "退出横屏") { setLandscape(false) } else ToolIcon(Icons.Filled.Fullscreen, "横屏全屏") { setLandscape(true) }
                     }
                 }
             }
