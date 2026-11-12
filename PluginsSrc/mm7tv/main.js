@@ -174,13 +174,23 @@ export default {
     if (!embed) {
       const html = await req(SITE + path);
       const m = html.match(/"contentUrl"\s*:\s*"([^"]+)"/);
-      if (!m) throw host.error('E_UNSUPPORTED', '详情页里没有播放器地址');
+      if (!m) throw host.error('E_UNSUPPORTED', '这个页面拿不到播放器地址（國產影片分类暂不支持）');
       embed = m[1];
       embCache[id] = { u: embed, t: Date.now() };
     }
 
-    // 2) embed 页 → 解开 packer（宿主的 unpackPacker 只做字符串替换，不执行远程 JS）
+    // 2) 先按域名分流：DoodStream 系 embed（playmogo / mmsi / dood）挂了 Turnstile 人机验证，
+    //    插件和播放器都过不去，直接给一句人话，别让它变成「域名未授权」。
+    const host = (String(embed).match(/^https?:\/\/([^\/]+)/) || [])[1] || '';
+    if (/(playmogo|mmsi\d*|dood|ds2play|d000d|doodstream)/i.test(host)) {
+      throw host.error('E_UNSUPPORTED', '这个视频托管在 DoodStream，需要人机验证，暂不支持');
+    }
+
+    // 3) embed 页 → 解开 packer（宿主的 unpackPacker 只做字符串替换，不执行远程 JS）
     const page = await req(embed);
+    if (/turnstile|g-recaptcha|DoodStream/i.test(page)) {
+      throw host.error('E_UNSUPPORTED', '这个视频需要人机验证，暂不支持');
+    }
     let text = '';
     try { text = String(host.codec.unpackPacker(page) || ''); } catch (e) { text = ''; }
     let list = pickStreams(text);
