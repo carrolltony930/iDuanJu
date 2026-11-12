@@ -23,6 +23,9 @@ const CDN_HOSTS = [
   { name: '线路4 IPv6', host: 'shark-v6.hdcdn.store' }
 ];
 
+// detail() 抓到的播放地址缓存，play() 直接复用，避免重复请求详情页被 429
+const srcCache = {};
+
 const CATEGORIES = [
   { id: 'list', name: '最新' },
   { id: 'top7_list', name: '周榜' },
@@ -31,8 +34,7 @@ const CATEGORIES = [
   { id: 'long_list', name: '10分钟+' }
 ];
 
-function clean(s) {
-  return String(s == null ? '' : s)
+function clean(s) {  return String(s == null ? '' : s)
     .replace(/<[^>]*>/g, '')
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
@@ -44,6 +46,7 @@ function clean(s) {
 async function getHtml(path) {
   const res = await host.http.request({ url: SITE + path, headers: HEADERS, timeout: 25000 });
   const body = typeof res.body === 'string' ? res.body : '';
+  if (res.status === 429) throw host.error('E_RATE_LIMIT', '站点限流了，等 1~2 分钟再试');
   if (res.status < 200 || res.status >= 300) throw host.error('E_HTTP', 'HTTP ' + res.status + ' ' + path);
   return body;
 }
@@ -146,6 +149,8 @@ export default {
     const id = videoId(input.id);
     if (!id) throw host.error('E_NOT_FOUND', '缺少视频 id');
     const html = await getHtml('/video-' + id + '.htm');
+    const src = html.match(/id="video-source"[^>]*src="([^"]+)"/);
+    if (src) srcCache[id] = { u: src[1], t: Date.now() };   // 顺手缓存，play() 就不用再拉一次（站点限流很凶）
     const t = html.match(/<h3 class="panel-title">([\s\S]*?)<\/h3>/);
     let title = t ? clean(t[1]) : '';
     if (!title) {
@@ -164,18 +169,31 @@ export default {
   async play(input) {
     const id = videoId(input.episodeId || input.id);
     if (!id) throw host.error('E_NOT_FOUND', '缺少视频 id');
-    const html = await getHtml('/video-' + id + '.htm');
-    const src = html.match(/id="video-source"[^>]*src="([^"]+)"/) || html.match(/<source[^>]+src="([^"]+\.m3u8[^"]*)"/);
-    if (!src) throw host.error('E_UNSUPPORTED', '页面里没有找到播放地址');
-    const original = src[1];
-    const u = new URL(original);
+
+    // 优先用 detail() 缓存的地址（60 分钟内有效），避免再请求详情页触发 429
+    let original = '';
+    const c = srcCache[id];
+    if (c && Date.now() - c.t < 60 * 60 * 1000) original = c.u;
+    if (!original) {
+      const html = await getHtml('/video-' + id + '.htm');
+      const src = html.match(/id="video-source"[^>]*src="([^"]+)"/) || html.match(/<source[^>]+src="([^"]+\.m3u8[^"]*)"/);
+      if (!src) throw host.error('E_UNSUPPORTED', '页面里没有找到播放地址');
+      original = src[1];
+      srcCache[id] = { u: original, t: Date.now() };
+    }
+
+    // 沙箱里没有 URL 对象，手工拆出 path + query（new URL 会抛 "URL is not defined"）
+    const m = original.match(/^(https?:\/\/[^\/]+)(\/[^?#]*)?(\?[^#]*)?/);
+    if (!m) throw host.error('E_PARSE', '播放地址无法解析');
+    const path = m[2] || '/', query = m[3] || '';
+
     const streams = [];
     for (const node of CDN_HOSTS) {
       streams.push({
         name: node.name,
-        url: 'https://' + node.host + u.pathname + u.search,
+        url: 'https://' + node.host + path + query,
         format: 'hls',
-        headers: { 'Referer': SITE + '/', 'User-Agent': UA }
+        headers: { 'Referer': SITE + '/' }
       });
     }
     host.log('play ' + id + ' → ' + streams.length + ' 条线路');

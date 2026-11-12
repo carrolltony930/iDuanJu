@@ -20,6 +20,9 @@ const HEADERS = {
 };
 
 // 站点分类（(?category=) 代码，名称取自站点）
+// detail() 解出来的播放地址缓存，play() 复用，减少详情页请求（站点会 429）
+const srcCache = {};
+
 const CATEGORIES = [
   { id: 'cat:hd', name: '高清' },
   { id: 'cat:rf', name: '最近加精' },
@@ -47,6 +50,7 @@ async function getHtml(path) {
   const res = await host.http.request({ url: SITE + path, headers: HEADERS, timeout: 25000 });
   const body = typeof res.body === 'string' ? res.body : '';
   if (res.status === 403 && body.indexOf('Just a moment') >= 0) throw host.error('E_CF_REQUIRED', '站点要求验证');
+  if (res.status === 429) throw host.error('E_RATE_LIMIT', '站点限流了，等 1~2 分钟再试');
   if (res.status < 200 || res.status >= 300) throw host.error('E_HTTP', 'HTTP ' + res.status + ' ' + path);
   return body;
 }
@@ -185,6 +189,8 @@ export default {
     if (!id) throw host.error('E_NOT_FOUND', '缺少 viewkey');
     const html = await getHtml('/view_video.php?viewkey=' + id[0]);
     const meta = detailMeta(html);
+    const srcs = decodeSources(html);
+    if (srcs.length) srcCache[id[0]] = { u: srcs[0], t: Date.now() };
     return {
       title: meta.title || id[0],
       cover: meta.poster,
@@ -196,9 +202,15 @@ export default {
   async play(input) {
     const id = String(input.episodeId || input.id || '').match(/[0-9a-f]{12,32}/);
     if (!id) throw host.error('E_NOT_FOUND', '缺少 viewkey');
-    const html = await getHtml('/view_video.php?viewkey=' + id[0]);
 
-    const candidates = decodeSources(html);
+    let candidates = [];
+    const cached = srcCache[id[0]];
+    if (cached && Date.now() - cached.t < 60 * 60 * 1000) candidates = [cached.u];
+    if (!candidates.length) {
+      const html2 = await getHtml('/view_video.php?viewkey=' + id[0]);
+      candidates = decodeSources(html2);
+      if (candidates.length) srcCache[id[0]] = { u: candidates[0], t: Date.now() };
+    }
     if (!candidates.length) throw host.error('E_UNSUPPORTED', '页面里没有找到播放地址');
 
     // 站点的地址路径是 //mp43/...（双斜杠）。Safari 会容错，但 AVFoundation 不一定，
