@@ -187,52 +187,18 @@ export default {
     if (!m) throw host.error('E_PARSE', '播放地址无法解析');
     const path = m[2] || '/', query = m[3] || '';
 
-    // 实测：线路1（cdn）经常「m3u8 能取、分片却取不到」，线路2（Shark）才是能播的。
-    // 为了减少请求数、并且只交出一条线路（避免 App 切流卡死），这里按偏好顺序逐条探，
-    // 命中第一条就返回，不再把 4 条全给出去。
-    const order = [CDN_HOSTS[1], CDN_HOSTS[0], CDN_HOSTS[2]];   // Shark → cdn → FDC
-    const hdr = { 'Referer': SITE + '/', 'User-Agent': UA };
-
-    async function tryHost(node) {
-      const u = 'https://' + node.host + path + query;
-      try {
-        const r = await host.http.request({ url: u, headers: hdr, timeout: 2500 });
-        if (!(r.status >= 200 && r.status < 400)) return null;
-        const body = typeof r.body === 'string' ? r.body : '';
-        let seg = '';
-        const lines = body.split(/\r?\n/);
-        for (let k = 0; k < lines.length; k++) {
-          const s = lines[k].trim();
-          if (!s || s.charAt(0) === '#') continue;
-          seg = s;
-          break;
-        }
-        if (seg) {
-          const segUrl = seg.indexOf('http') === 0 ? seg : u.replace(/[^\/]*$/, '') + seg;
-          const r2 = await host.http.request({ url: segUrl, headers: hdr, timeout: 2500 });
-          if (!(r2.status >= 200 && r2.status < 400)) return null;
-        }
-        return { name: node.name, url: u };
-      } catch (e) {
-        return null;
-      }
-    }
-
-    let picked = null;
-    for (let i = 0; i < order.length; i++) {
-      picked = await tryHost(order[i]);
-      if (picked) break;
-    }
-    if (!picked) picked = { name: CDN_HOSTS[1].name, url: 'https://' + CDN_HOSTS[1].host + path + query };
-
+    // 不做任何探测：插件这边一个请求都不多发，直接把实测最稳的 Shark 线路交出去。
+    // （之前加探测是为了挑线路，但探测和播放打的是同一个 token，可能是 -1011 的来源，
+    //   先去掉做 A/B 对照。）
+    const node = CDN_HOSTS[1];                      // Shark
     const streams = [{
-      name: picked.name,
-      url: picked.url,
+      name: node.name,
+      url: 'https://' + node.host + path + query,
       format: 'hls',
       headers: { 'Referer': SITE + '/', 'User-Agent': UA }
     }];
-    host.log('play ' + id + ' → 1 条线路（' + picked.name + '）');
-    host.log('  ' + picked.url);
+    host.log('play ' + id + ' → 1 条线路（' + node.name + '，无探测）');
+    host.log('  ' + streams[0].url);
     return { streams: streams };
   }
 };
