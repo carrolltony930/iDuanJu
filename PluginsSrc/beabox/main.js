@@ -115,18 +115,29 @@ async function callApi(path) {
 
 // ---------- 映射 ----------
 
+// 封面是 "<base64 外层的 data URL>" 取前 4096 字节再与 0x12 异或后的文本。
+// App 端用 transform 原生还原（PluginProviders.PluginMedia.apply case "xor"）。
+const COVER_TRANSFORM = { type: 'xor', key: 18, bytes: 4096 };
+
+function coverOf(v) {
+  const u = String(v && v.vodPic ? v.vodPic : '');
+  return u.indexOf('https://') === 0 ? u : '';
+}
+
 function item(v) {
   const id = String(v.vodId == null ? '' : v.vodId);
   const title = clean(v.vodName);
   if (!id || !title) return null;
   const tags = Array.isArray(v.vodClass) ? v.vodClass.map(clean).filter(Boolean) : [];
-  return {
+  const cover = coverOf(v);
+  const out = {
     id: id,
     title: title,
-    // 封面是 XOR(dataURL) 加密的 .txt，App 的解码器还不支持这类，先不提供。
     remarks: tags.slice(0, 3).join(' · '),
     tags: tags
   };
+  if (cover) { out.cover = cover; out.coverTransform = COVER_TRANSFORM; }
+  return out;
 }
 
 function pageOf(data, page) {
@@ -219,7 +230,8 @@ export default {
     if (!d || !d.vodId) throw host.error('E_NOT_FOUND', '详情为空');
     const title = clean(d.vodName);
     const tags = Array.isArray(d.vodClass) ? d.vodClass.map(clean).filter(Boolean) : [];
-    return {
+    const cover = coverOf(d);
+    const out = {
       title: title,
       desc: tags.length ? tags.join(' · ') : '',
       tags: tags,
@@ -228,6 +240,8 @@ export default {
         episodes: [{ id: String(d.vodId), name: title }]
       }]
     };
+    if (cover) { out.cover = cover; out.coverTransform = COVER_TRANSFORM; }
+    return out;
   },
 
   async play(input) {

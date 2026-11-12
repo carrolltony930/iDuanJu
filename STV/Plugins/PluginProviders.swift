@@ -121,6 +121,21 @@ enum PluginMedia {
             if (t["encoding"] as? String) == "base64" { input = try PluginCrypto.decode(String(decoding: data, as: UTF8.self), "base64") }
             return try PluginCrypto.aes(encrypt: false, mode: t["mode"] as? String ?? "cbc", key: key, iv: iv, data: input,
                                         padding: (t["padding"] as? String ?? "pkcs7") != "none")
+        case "xor":
+            // 站点把图片包成文本：前 N 字节与单字节 key 异或后，整体是一段 data:<mime>;base64,<payload>。
+            // beabox 就是这种（key=18，前 4096 字节）。
+            let key = UInt8(truncatingIfNeeded: t["key"] as? Int ?? 0)
+            var out = Data(data)
+            let n = min(max(t["bytes"] as? Int ?? 4096, 0), out.count)
+            if n > 0 { for i in 0..<n { out[i] ^= key } }
+            guard let text = String(data: out, encoding: .utf8),
+                  let mark = text.range(of: ";base64,") else {
+                throw ProviderError.invalid("xor 解码失败：结果不是 data URL")
+            }
+            guard let bytes = Data(base64Encoded: String(text[mark.upperBound...]), options: .ignoreUnknownCharacters), !bytes.isEmpty else {
+                throw ProviderError.invalid("xor 解码失败：base64 内容无效")
+            }
+            return bytes
         default:
             return data
         }
@@ -198,6 +213,15 @@ enum PluginOut {
             return PluginCategory(id: id, name: name, isRank: c["isRank"] as? Bool ?? false)
         }
     }
+    /// 图片变换白名单。插件只能在下列类型里声明，别的直接忽略（不是报错）。
+    static let allowedTransforms: Set<String> = ["stripes", "aes", "xor"]
+    static func transform(_ v: Any?) -> [String: Any]? {
+        guard let t = v as? [String: Any], let type = t["type"] as? String,
+              allowedTransforms.contains(type) else { return nil }
+        return t
+    }
+    /// 列表项 / 详情里同名 key，用于封面解码（例如 beabox 的 XOR+dataURL）。
+    static func coverTransform(_ o: [String: Any]) -> [String: Any]? { transform(o["coverTransform"]) }
 }
 
 // MARK: - Comic plugins
@@ -219,7 +243,8 @@ struct JSComicProvider: MangaProvider {
         guard !ContentFilter.isBlocked([title] + tags) else { return nil }
         let cover = PluginOut.url(o["cover"])
         return MangaItem(source: source, mangaId: id, title: title,
-                         cover: PluginMedia.ref(plugin: pluginID, url: cover, headers: PluginOut.headers(o["coverHeaders"])),
+                         cover: PluginMedia.ref(plugin: pluginID, url: cover, headers: PluginOut.headers(o["coverHeaders"]),
+                                               transform: PluginOut.coverTransform(o)),
                          author: PluginOut.s(o["author"], max: 80), tags: tags, latest: PluginOut.s(o["remarks"], max: 40))
     }
 
@@ -253,7 +278,10 @@ struct JSComicProvider: MangaProvider {
         let title = PluginOut.s(o["title"], max: 200)
         if !title.isEmpty { item.title = title }
         let cover = PluginOut.url(o["cover"])
-        if !cover.isEmpty { item.cover = PluginMedia.ref(plugin: pluginID, url: cover, headers: PluginOut.headers(o["coverHeaders"])) }
+        if !cover.isEmpty {
+            item.cover = PluginMedia.ref(plugin: pluginID, url: cover, headers: PluginOut.headers(o["coverHeaders"]),
+                                         transform: PluginOut.coverTransform(o))
+        }
         let tags = PluginOut.strings(o["tags"])
         if !tags.isEmpty { item.tags = tags }
         let author = PluginOut.s(o["author"], max: 80)
@@ -274,9 +302,7 @@ struct JSComicProvider: MangaProvider {
             let u = PluginOut.url(i["url"])
             guard !u.isEmpty else { return nil }
             let h = common.merging(PluginOut.headers(i["headers"])) { _, b in b }
-            var t = i["transform"] as? [String: Any]
-            if let tt = t, !["stripes", "aes"].contains(tt["type"] as? String ?? "") { t = nil }
-            return PluginMedia.ref(plugin: pluginID, url: u, headers: h, transform: t)
+            return PluginMedia.ref(plugin: pluginID, url: u, headers: h, transform: PluginOut.transform(i["transform"]))
         }
         guard !imgs.isEmpty else { throw ProviderError.upstream("插件没有返回图片") }
         return imgs
@@ -300,7 +326,8 @@ struct JSVideoProvider: SiteProvider {
         guard !id.isEmpty, !title.isEmpty else { return nil }
         let tags = PluginOut.strings(o["tags"]) + PluginOut.strings(o["badges"])
         guard !ContentFilter.isBlocked([title] + tags) else { return nil }
-        let cover = PluginMedia.ref(plugin: pluginID, url: PluginOut.url(o["cover"]), headers: PluginOut.headers(o["coverHeaders"]))
+        let cover = PluginMedia.ref(plugin: pluginID, url: PluginOut.url(o["cover"]), headers: PluginOut.headers(o["coverHeaders"]),
+                                    transform: PluginOut.coverTransform(o))
         return HGSeries(source: source, seriesId: id, title: title, cover: cover, subtitle: PluginOut.s(o["remarks"], max: 40).nilIfEmpty,
                         actors: PluginOut.strings(o["actors"]), orientation: (o["orientation"] as? String) == "portrait" ? "portrait" : nil, tags: tags)
     }
@@ -346,7 +373,8 @@ struct JSVideoProvider: SiteProvider {
         }
         let cover = PluginOut.url(o["cover"])
         return HGSeriesDetail(source: source, seriesId: s.seriesId, title: title,
-                              cover: cover.isEmpty ? s.cover : PluginMedia.ref(plugin: pluginID, url: cover, headers: PluginOut.headers(o["coverHeaders"])),
+                              cover: cover.isEmpty ? s.cover : PluginMedia.ref(plugin: pluginID, url: cover, headers: PluginOut.headers(o["coverHeaders"]),
+                                                                             transform: PluginOut.coverTransform(o)),
                               desc: PluginOut.s(o["desc"], max: 4000), author: PluginOut.s(o["director"], max: 80).nilIfEmpty,
                               actors: PluginOut.strings(o["actors"]), onlineTime: 0, totalEps: eps.count, episodes: eps, tags: tags,
                               episodeLabel: eps.count > 1 ? "共\(eps.count)集" : "长视频")
