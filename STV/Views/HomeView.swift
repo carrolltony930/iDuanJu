@@ -234,7 +234,6 @@ private struct HomeFeedPage: View {
     @State private var legacyError: Error?
     @State private var heroIndex = 0
     private let cache = BoardCache.shared
-    private let library = LibraryStore.shared
     private let gutter: CGFloat = 16
     /// DEBUG `STV_HOME_SCROLL=bottom` opens the feed scrolled to the end (simulator screenshots).
     private static var debugAnchor: UnitPoint? {
@@ -255,7 +254,6 @@ private struct HomeFeedPage: View {
                         if !heroPicks.isEmpty {
                             PosterHero(board: boards.first?.title ?? "", picks: heroPicks, index: $heroIndex).id(tab).padding(.horizontal, gutter)
                         }
-                        if source == .hongguo, !library.continueWatching.isEmpty { ContinueRow(items: library.continueWatching) }
                         sections
                     }.padding(.top, 4)
                 }

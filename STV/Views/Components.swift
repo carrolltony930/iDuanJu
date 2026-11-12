@@ -327,45 +327,5 @@ struct SectionHeader: View {
     }
 }
 
-// MARK: Continue watching
 
-struct ContinueRow: View {
-    @Environment(\.zoomNS) private var ns
-    let items: [WatchProgress]
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "继续观看", trailing: AnyView(NavigationLink(value: Route.history) {
-                Text("全部").font(.subheadline).foregroundStyle(STVTheme.secondary)
-            }))
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(items.prefix(10)) { p in
-                        NavigationLink(value: Route.series(p.series)) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                CoverView(url: p.series.cover, corner: 10)
-                                    .frame(width: 112, height: 150)
-                                    .zoomSource(p.series.id, ns)
-                                    .overlay(alignment: .bottom) {
-                                        VStack(spacing: 4) {
-                                            Spacer()
-                                            Text(p.resumeLabel).font(.caption2.weight(.semibold)).foregroundStyle(.white)
-                                            GeometryReader { g in
-                                                Capsule().fill(.white.opacity(0.25))
-                                                    .overlay(alignment: .leading) { Capsule().fill(STVTheme.accent).frame(width: g.size.width * p.fraction) }
-                                            }.frame(height: 3).padding(.horizontal, 8).padding(.bottom, 8)
-                                        }
-                                        .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom))
-                                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                                    }
-                                Text(p.series.title).font(.caption).foregroundStyle(STVTheme.text).lineLimit(1).frame(width: 112, alignment: .leading)
-                            }
-                        }.buttonStyle(.plain)
-                        .contextMenu { Button("删除观看记录", systemImage: "trash", role: .destructive) { LibraryStore.shared.removeProgress(p.series) } }
-                    }
-                }.padding(.horizontal, 16)
-            }
-            // Content narrower than the screen → don't grab horizontal drags (首页横滑翻来源页).
-            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-        }
-    }
-}
+
