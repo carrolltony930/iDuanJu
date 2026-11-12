@@ -46,12 +46,36 @@ function clean(s) {
     .trim();
 }
 
-async function req(path) {
-  const res = await host.http.request({ url: path.indexOf('http') === 0 ? path : SITE + path, headers: HEADERS, timeout: 25000 });
-  if (res.status === 429) throw host.error('E_RATE_LIMIT', '站点限流了，等 1~2 分钟再试');
-  if (res.status === 404) throw host.error('E_NOT_FOUND', '页面不存在');
-  if (res.status < 200 || res.status >= 300) throw host.error('E_HTTP', 'HTTP ' + res.status + ' ' + path);
-  return typeof res.body === 'string' ? res.body : '';
+// 99vv94 的服务端会在会话中途要求 TLS 重协商，iOS 的 URLSession 偶发握手失败
+// （日志里是 "An SSL error has occurred"）。沙箱没有定时器，只能立即重试；
+// 换新连接往往就通过了。
+async function req(path, tries) {
+  const url = path.indexOf('http') === 0 ? path : SITE + path;
+  const n = tries || 3;
+  let lastErr = null;
+  for (let i = 0; i < n; i++) {
+    try {
+      const res = await host.http.request({ url: url, headers: HEADERS, timeout: 25000 });
+      if (res.status === 429) { lastErr = host.error('E_RATE_LIMIT', '站点限流了，等 1~2 分钟再试'); continue; }
+      if (res.status === 404) throw host.error('E_NOT_FOUND', '页面不存在');
+      if (res.status < 200 || res.status >= 300) {
+        lastErr = host.error('E_HTTP', 'HTTP ' + res.status + ' ' + path);
+        continue;
+      }
+      return typeof res.body === 'string' ? res.body : '';
+    } catch (e) {
+      const code = e && e.code ? e.code : '';
+      if (code === 'E_NOT_FOUND') throw e;
+      lastErr = e;
+      // 网络/TLS 抖动就换一次连接重试
+      if (code === 'E_NETWORK' || code === 'E_TIMEOUT' || code === 'E_HTTP' || code === 'E_RATE_LIMIT') continue;
+      throw e;
+    }
+  }
+  if (lastErr && /SSL|secure connection/i.test(String(lastErr.message || lastErr))) {
+    throw host.error('E_NETWORK', '站点 TLS 握手失败（这个站服务器要求重协商，iOS 会偶发失败），下拉重试即可');
+  }
+  throw lastErr || host.error('E_NETWORK', '网络错误');
 }
 
 // 卡片：
