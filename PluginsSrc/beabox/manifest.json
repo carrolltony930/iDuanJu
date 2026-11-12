@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "id": "com.idj.beabox",
+  "name": "笔盒 Beabox",
+  "version": "1.0.0",
+  "author": { "name": "carrolltony930" },
+  "description": "笔盒（beabox）自建源：最新更新 + 标签浏览 + 直链 HLS。单集长视频。",
+  "type": "video",
+  "adult": true,
+  "language": ["zh"],
+  "minAppVersion": "1.5",
+  "entry": "main.js",
+  "permissions": {
+    "http": [
+      "bh4066.top",
+      "bh4254.top",
+      "bh4287.top",
+      "bh4362.top",
+      "bh4549.top",
+      "bh5530.top",
+      "bh6246.top",
+      "bh6291.top",
+      "bh6429.top",
+      "bh6831.top"
+    ],
+    "media": ["*.538fd3d70.top", "*.cdn2020.com", "*.gkkqay.com"],
+    "cloudflare": false,
+    "storage": true,
+    "login": false
+  },
+  "capabilities": ["home", "category", "search", "detail", "play"],
+  "settings": []
+}
