@@ -98,6 +98,7 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
         guard claim(req, id: id) else { return }
         guard let data, err == nil,
               (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false else {
+            NSLog("%@", "[STV] hls-fail status=\((resp as? HTTPURLResponse)?.statusCode ?? -1) host=\(real.host ?? "?") path=\(real.path.prefix(70)) ct=\(resp?.mimeType ?? "-") err=\(err.map { "\($0)" } ?? "-")")
             finish(req, with: err ?? URLError(.badServerResponse))
             return
         }
