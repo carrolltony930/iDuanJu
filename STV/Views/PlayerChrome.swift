@@ -256,21 +256,16 @@ struct PlayerSpeedHUD: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "forward.fill")
-                .font(.system(size: 18, weight: .bold))
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(rateNumber)
-                    .font(.system(size: 22, weight: .heavy, design: .rounded).monospacedDigit())
-                Text("倍速")
-                    .font(.system(size: 18, weight: .semibold))
-            }
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Text(rateNumber)
+                .font(.system(size: 12, weight: .heavy, design: .rounded).monospacedDigit())
+            Text("倍速")
+                .font(.system(size: 10, weight: .semibold))
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(.black.opacity(0.72), in: Capsule())
-        .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(.black.opacity(0.58), in: Capsule())
     }
 }
 
