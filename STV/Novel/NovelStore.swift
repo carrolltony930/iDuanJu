@@ -128,7 +128,6 @@ final class NovelStore {
 final class NovelPrefs {
     static let shared = NovelPrefs()
     enum Theme: Int, CaseIterable { case white, cream, green, night }
-    enum Turn: Int, CaseIterable { case slide, scroll }
 
     var fontSize: Double { didSet { d.set(fontSize, forKey: "stv.novel.font") } }
     /// 0 = 紧 … 1 = 松
@@ -136,8 +135,9 @@ final class NovelPrefs {
     /// 0 = 小 … 1 = 大
     var margin: Double { didSet { d.set(margin, forKey: "stv.novel.margin") } }
     var theme: Theme { didSet { d.set(theme.rawValue, forKey: "stv.novel.theme") } }
-    var turn: Turn { didSet { d.set(turn.rawValue, forKey: "stv.novel.turn") } }
-    var serif: Bool { didSet { d.set(serif, forKey: "stv.novel.serif") } }
+    var turn: NovelTurnStyle { didSet { d.set(turn.rawValue, forKey: "stv.novel.turnStyle") } }
+    /// `NovelFonts.all` id.
+    var fontID: String { didSet { d.set(fontID, forKey: "stv.novel.fontID") } }
     var indent: Bool { didSet { d.set(indent, forKey: "stv.novel.indent") } }
     private let d = UserDefaults.standard
 
@@ -146,8 +146,8 @@ final class NovelPrefs {
         lineSpacing = d.object(forKey: "stv.novel.lineSpacing") as? Double ?? 0.5
         margin = d.object(forKey: "stv.novel.margin") as? Double ?? 0.3
         theme = Theme(rawValue: d.integer(forKey: "stv.novel.theme")) ?? .white
-        turn = Turn(rawValue: d.integer(forKey: "stv.novel.turn")) ?? .slide
-        serif = d.bool(forKey: "stv.novel.serif")
+        turn = (d.object(forKey: "stv.novel.turnStyle") as? Int).flatMap(NovelTurnStyle.init(rawValue:)) ?? .slide
+        fontID = d.string(forKey: "stv.novel.fontID") ?? "system"
         indent = d.object(forKey: "stv.novel.indent") as? Bool ?? true
     }
 }

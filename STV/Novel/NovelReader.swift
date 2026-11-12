@@ -41,6 +41,12 @@ enum NovelLayout {
     /// The first paragraph is the chapter heading when it matches `title`.
     static func attributed(_ text: String, title: String, size: CGFloat, lineSpacing: Double, indent: Bool = true,
         serif: Bool, color: UIColor) -> NSAttributedString {
+        attributed(text, title: title, size: size, lineSpacing: lineSpacing, indent: indent,
+            font: font(size, serif: serif), bold: font(size * 1.3, serif: serif, bold: true), color: color)
+    }
+
+    static func attributed(_ text: String, title: String, size: CGFloat, lineSpacing: Double, indent: Bool,
+        font: UIFont, bold: UIFont, color: UIColor) -> NSAttributedString {
         let out = NSMutableAttributedString()
         let gap = size * (0.25 + 0.75 * lineSpacing)          // WeRead 适中 ≈ 0.6 em between lines
         let body = NSMutableParagraphStyle()
@@ -58,7 +64,7 @@ enum NovelLayout {
             let isHead = first && piece.trimmingCharacters(in: .newlines) == title
             first = false
             out.append(NSAttributedString(string: piece, attributes: [
-                            .font: isHead ? font(size * 1.3, serif: serif, bold: true) : font(size, serif: serif),
+                            .font: isHead ? bold : font,
                             .foregroundColor: color,
                             .paragraphStyle: isHead ? head : body,
             ]))
@@ -97,67 +103,67 @@ extension Color {
     }
 }
 
-// MARK: - 听 (text to speech)
+// MARK: - Reader
 
-@MainActor @Observable
-final class NovelSpeaker: NSObject, AVSpeechSynthesizerDelegate {
-    private(set) var speaking = false
-    /// Chapter offset of the word being spoken.
-    private(set) var position = 0
-    var onFinish: (() -> Void)?
-    @ObservationIgnored private let synth = AVSpeechSynthesizer()
-    @ObservationIgnored private var base = 0
+/// Commands from SwiftUI into the UIKit pager (taps / swipes are handled inside the pager itself).
+@MainActor final class NovelPagerHandle {
+    weak var controller: NovelPagerController?
+    var version = 0
+}
 
-    override init() { super.init(); synth.delegate = self }
+/// Paged reading (仿真 / 滑动 / 覆盖 / 无动画).
+struct NovelPagedView: UIViewControllerRepresentable {
+    let paginator: NovelPaginator
+    let handle: NovelPagerHandle
+    var start: NovelPageRef
+    var style: NovelTurnStyle
+    var insets: UIEdgeInsets
+    var highlight: NovelHighlight?
+    var version: Int
+    var onPage: (NovelPageRef) -> Void
+    var onCenter: () -> Void
+    var onSwipeUp: () -> Void
 
-    func speak(_ chapterText: String, from offset: Int) {
-        synth.stopSpeaking(at: .immediate)
-        let ns = chapterText as NSString
-        guard offset < ns.length else { return }
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        base = offset
-        position = offset
-        let u = AVSpeechUtterance(string: ns.substring(from: offset))
-        u.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-        u.rate = AVSpeechUtteranceDefaultSpeechRate
-        speaking = true
-        synth.speak(u)
+    func makeUIViewController(context: Context) -> NovelPagerController {
+        let c = NovelPagerController(paginator: paginator, start: start)
+        c.insets = insets
+        c.setStyle(style)
+        handle.controller = c
+        handle.version = version
+        return c
     }
 
-    func stop() {
-        speaking = false
-        onFinish = nil
-        synth.stopSpeaking(at: .immediate)
-    }
-
-    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, willSpeakRangeOfSpeechString r: NSRange, utterance: AVSpeechUtterance) {
-        MainActor.assumeIsolated { position = base + r.location }
-    }
-
-    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        MainActor.assumeIsolated { if speaking { onFinish?() } }
+    func updateUIViewController(_ c: NovelPagerController, context: Context) {
+        c.onPageChange = onPage
+        c.onCenterTap = onCenter
+        c.onSwipeUp = onSwipeUp
+        let relayout = handle.version != version || c.insets != insets
+        c.insets = insets
+        handle.version = version
+        c.setStyle(style)
+        c.highlight = highlight
+        if relayout || c.current != start { c.show(start) }
     }
 }
 
-// MARK: - Reader
-
-/// Reader after WeRead (iOS): chapter name top-left, page count bottom-right, tap left / right third or
-/// swipe to turn, tap the middle or swipe up for the toolbar (目录 · 书籍 · 进度 · 亮度 · 字体) and 听.
+/// Reader after WeRead (iOS): chapter name top-left, page number bottom-right, interactive page turning,
+/// tap the middle or swipe up for the toolbar (目录 · 书籍 · 进度 · 亮度 · 字体) and 听书.
 struct NovelReaderView: View {
     let book: NovelBook
     private let store = NovelStore.shared
     @State private var prefs = NovelPrefs.shared
+    @State private var fonts = NovelFonts.shared
     @Environment(\.dismiss) private var dismiss
 
-    @State private var chapter = 0
-    @State private var attributed = NSAttributedString()
-    @State private var pages: [NSRange] = [NSRange(location: 0, length: 0)]
-    @State private var page = 0
-    @State private var pageSize: CGSize = .zero
-    @State private var forward = true
+    @State private var paginator: NovelPaginator
+    @State private var handle = NovelPagerHandle()
+    @State private var ref = NovelPageRef(chapter: 0, index: 0)
+    @State private var version = 0
+    @State private var insets = UIEdgeInsets.zero
+    @State private var ready = false
     @State private var menu = false
     @State private var tab: Tab?
+    @State private var hint = true
     @State private var lastLight: NovelPrefs.Theme = .white
     @State private var autoTurn = false
     @State private var speaker = NovelSpeaker()
@@ -166,102 +172,141 @@ struct NovelReaderView: View {
     @State private var tocSearch = false
     @State private var query = ""
     @State private var hits: [(chapter: Int, offset: Int, snippet: String)] = []
-    enum Tab: String { case toc, info, progress, light, font }
+    enum Tab: Equatable { case toc, info, progress, light, font, fonts, turn, listen }
+
+    init(book: NovelBook) {
+        self.book = book
+        _paginator = State(initialValue: NovelPaginator(book: book))
+    }
 
     private var pal: NovelLayout.Palette { NovelLayout.palette(prefs.theme) }
-    private var chapterTitle: String { book.chapters.indices.contains(chapter) ? book.chapters[chapter].title : "" }
     private var hMargin: CGFloat { NovelLayout.margin(prefs.margin) }
-    private var layoutKey: String {
-        "\(prefs.fontSize)-\(prefs.lineSpacing)-\(prefs.margin)-\(prefs.serif)-\(prefs.indent)-\(prefs.theme.rawValue)-\(Int(pageSize.width))x\(Int(pageSize.height))"
-    }
     private var totalChars: Int { book.chapters.last?.end ?? 0 }
-    private var bookOffset: Int { (book.chapters.indices.contains(chapter) ? book.chapters[chapter].start : 0) + currentOffset }
+    private var offsetInChapter: Int { paginator.style == nil ? 0 : paginator.range(ref).location }
+    private var bookOffset: Int { (book.chapters.indices.contains(ref.chapter) ? book.chapters[ref.chapter].start : 0) + offsetInChapter }
     private var fraction: Double { totalChars > 0 ? Double(bookOffset) / Double(totalChars) : 0 }
-    /// Characters per page on this layout (WeRead shows whole-book page numbers).
-    private var charsPerPage: Double { max(1, Double(attributed.length) / Double(max(1, pages.count))) }
+    private var highlight: NovelHighlight? { speaker.sentence.map { NovelHighlight(chapter: speaker.chapter, range: $0) } }
+    private func title(_ i: Int) -> String { book.chapters.indices.contains(i) ? book.chapters[i].title : "" }
 
     var body: some View {
         GeometryReader { geo in
-            let size = CGSize(width: geo.size.width - 2 * hMargin, height: geo.size.height - 62)
             ZStack(alignment: .bottom) {
                 pal.bg.ignoresSafeArea()
-                if prefs.turn == .slide { slideReader(geo) } else { scrollReader }
+                if ready {
+                    if prefs.turn == .scroll {
+                        scrollReader(geo)
+                    } else {
+                        NovelPagedView(paginator: paginator, handle: handle, start: ref, style: prefs.turn, insets: insets,
+                            highlight: highlight, version: version,
+                            onPage: { r in ref = r; save() },
+                            onCenter: { menu ? hideMenu() : showMenu() },
+                            onSwipeUp: { showMenu() })
+                            .ignoresSafeArea()
+                    }
+                }
+                if hint && !menu {
+                    Text("↑上滑显示工具栏").font(.system(size: 12)).foregroundStyle(pal.secondary)
+                        .padding(.bottom, 8).transition(.opacity).allowsHitTesting(false)
+                }
+                if speaker.active && !menu { miniPlayer.padding(.trailing, 16).padding(.bottom, 40).frame(maxWidth: .infinity, alignment: .trailing) }
                 if menu { menuLayer.transition(.opacity) }
             }
-            .onAppear { pageSize = size; restore(); brightness = Double(screen?.brightness ?? 0.5) }
-            .onChange(of: size) { _, s in pageSize = s }
+            .onAppear { configure(geo); restore(); brightness = Double(screen?.brightness ?? 0.5) }
+            .onChange(of: layoutKey(geo)) { _, _ in relayout(geo) }
         }
         .statusBarHidden(!menu)
         .preferredColorScheme(prefs.theme == .night ? .dark : .light)
-        .onChange(of: layoutKey) { _, _ in relayout(keepOffset: currentOffset) }
-        .onChange(of: speaker.position) { _, p in followSpeech(p) }
+        .onChange(of: speaker.sentence) { _, s in if let s { follow(s) } }
         .onDisappear { store.addReadTime(book, Date().timeIntervalSince(opened)); speaker.stop() }
+        .task {
+            // WeRead shows the hint briefly when a book opens.
+            try? await Task.sleep(for: .seconds(3))
+            withAnimation(.easeOut(duration: 0.6)) { hint = false }
+        }
         .task(id: autoTurn) {
             while autoTurn, !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(15))
-                if autoTurn, !menu { turn(+1) }
+                if autoTurn, !menu { handle.controller?.turn(+1) }
             }
         }
     }
 
-    // MARK: Page
+    // MARK: Layout
 
-    private func slideReader(_ geo: GeometryProxy) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(chapterTitle).font(.system(size: 12)).foregroundStyle(pal.secondary).lineLimit(1)
-                .frame(height: 22, alignment: .bottom).padding(.bottom, 10)
-            pageBody.frame(width: pageSize.width, height: pageSize.height, alignment: .topLeading)
-                .id("\(chapter)-\(page)-\(layoutKey)")
-                .transition(.asymmetric(insertion: .move(edge: forward ? .trailing : .leading),
-                    removal: .move(edge: forward ? .leading : .trailing)))
-            ZStack {
-                if !menu { Text("↑上滑显示工具栏").font(.system(size: 12)).foregroundStyle(pal.secondary) }
-                HStack {
-                    Spacer()
-                    Text("\(Int(Double(bookOffset) / charsPerPage) + 1) / \(Int(Double(totalChars) / charsPerPage) + 1)")
-                        .font(.system(size: 12).monospacedDigit()).foregroundStyle(pal.secondary)
-                        .accessibilityLabel("\(page + 1) / \(pages.count)").accessibilityIdentifier("novel.page")
-                }
-            }
-            .frame(height: 30)
-        }
-        .padding(.horizontal, hMargin)
-        .clipped()
-        .contentShape(Rectangle())
-        .onTapGesture(coordinateSpace: .local) { p in tap(at: p.x, width: geo.size.width) }
-        .gesture(DragGesture(minimumDistance: 24).onEnded { v in
-                if menu { return }
-                if v.translation.height < -50, abs(v.translation.width) < 60 { showMenu(); return }
-                if v.translation.width < -40 { turn(+1) } else if v.translation.width > 40 { turn(-1) }
-        })
+    private func layoutKey(_ geo: GeometryProxy) -> String {
+        "\(prefs.fontSize)-\(prefs.lineSpacing)-\(prefs.margin)-\(prefs.fontID)-\(prefs.indent)-\(prefs.theme.rawValue)-\(fonts.revision)-\(Int(geo.size.width))x\(Int(geo.size.height))"
     }
 
-    @ViewBuilder private var pageBody: some View {
-        let r = pages.indices.contains(page) ? pages[page] : NSRange(location: 0, length: attributed.length)
-        if NSMaxRange(r) <= attributed.length {
-            NovelTextView(text: attributed.attributedSubstring(from: r))
-        }
+    private func pageStyle(_ geo: GeometryProxy) -> NovelPageStyle {
+        let p = pal
+        return NovelPageStyle(size: CGSize(width: geo.size.width - 2 * hMargin, height: geo.size.height - 62),
+            fontSize: prefs.fontSize, lineSpacing: prefs.lineSpacing, indent: prefs.indent, fontID: prefs.fontID,
+            text: p.text, secondary: UIColor(p.secondary), background: UIColor(p.bg),
+            highlight: UIColor(NovelLayout.accent).withAlphaComponent(0.22))
     }
 
-    private var scrollReader: some View {
+    private func configure(_ geo: GeometryProxy) {
+        _ = fonts.isReady(prefs.fontID)
+        insets = UIEdgeInsets(top: geo.safeAreaInsets.top, left: hMargin + geo.safeAreaInsets.leading,
+            bottom: geo.safeAreaInsets.bottom, right: hMargin + geo.safeAreaInsets.trailing)
+        paginator.configure(pageStyle(geo))
+    }
+
+    /// Re-paginates and stays on the page holding the same text.
+    private func relayout(_ geo: GeometryProxy) {
+        let chapter = ref.chapter, offset = offsetInChapter
+        configure(geo)
+        ref = paginator.ref(chapter: chapter, offset: offset)
+        version += 1
+    }
+
+    // MARK: Scroll mode (continuous across chapters)
+
+    private func scrollReader(_ geo: GeometryProxy) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    Color.clear.frame(height: 1).id("top")
-                    NovelTextView(text: attributed)
-                    HStack {
-                        if chapter > 0 { Button("上一章") { go(chapter - 1); proxy.scrollTo("top") } }
-                        Spacer()
-                        if chapter + 1 < book.chapters.count { Button("下一章") { go(chapter + 1); proxy.scrollTo("top") } }
+                LazyVStack(alignment: .leading, spacing: 36) {
+                    ForEach(book.chapters.indices, id: \.self) { i in
+                        NovelTextView(text: scrollText(i))
+                            .id(i)
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("novel.scroll")) } action: { f in
+                            trackScroll(i, f)
+                        }
                     }
-                    .font(.system(size: 15, weight: .medium)).foregroundStyle(pal.secondary)
-                    .padding(.vertical, 20)
                 }
-                .padding(.horizontal, hMargin).padding(.vertical, 12)
+                .padding(.horizontal, hMargin).padding(.top, 36).padding(.bottom, 80)
             }
-            .contentShape(Rectangle())
+            .coordinateSpace(name: "novel.scroll")
+            .scrollIndicators(.hidden)
+            .overlay(alignment: .topLeading) {
+                Text(title(ref.chapter)).font(.system(size: 12)).foregroundStyle(pal.secondary)
+                    .padding(.horizontal, hMargin).frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).background(pal.bg)
+            }
+            .onAppear { proxy.scrollTo(ref.chapter, anchor: .top) }
+            .onChange(of: version) { _, _ in proxy.scrollTo(ref.chapter, anchor: .top) }
             .onTapGesture { menu ? hideMenu() : showMenu() }
+            .onChange(of: speaker.sentence) { _, s in
+                // 听书 in scroll mode: keep the sentence on screen (anchor at the same relative position).
+                guard let s, book.chapters.indices.contains(speaker.chapter) else { return }
+                let len = max(1, book.chapters[speaker.chapter].length)
+                withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(speaker.chapter, anchor: UnitPoint(x: 0, y: min(1, Double(s.location) / Double(len)))) }
+            }
         }
+    }
+
+    private func scrollText(_ i: Int) -> NSAttributedString {
+        let t = paginator.chapter(i).text
+        guard let h = highlight, h.chapter == i, NSMaxRange(h.range) <= t.length else { return t }
+        let m = NSMutableAttributedString(attributedString: t)
+        m.addAttribute(.backgroundColor, value: UIColor(NovelLayout.accent).withAlphaComponent(0.22), range: h.range)
+        return m
+    }
+
+    private func trackScroll(_ i: Int, _ f: CGRect) {
+        guard f.minY <= 40, f.maxY > 40, f.height > 0 else { return }
+        let len = book.chapters.indices.contains(i) ? book.chapters[i].length : 0
+        let r = paginator.ref(chapter: i, offset: Int(Double(len) * Double((40 - f.minY) / f.height)))
+        if r != ref { ref = r; save() }
     }
 
     // MARK: Toolbar and panels
@@ -279,7 +324,7 @@ struct NovelReaderView: View {
             .padding(.horizontal, 6)
             .background(pal.bg.ignoresSafeArea(edges: .top))
             Color.clear.contentShape(Rectangle()).onTapGesture { hideMenu() }
-                .overlay(alignment: .bottomTrailing) { listenButton.padding(.trailing, 16).padding(.bottom, 12) }
+                .overlay(alignment: .bottomTrailing) { if tab != .listen { listenButton.padding(.trailing, 16).padding(.bottom, 12) } }
             VStack(spacing: 0) {
                 if let tab { panel(tab).padding(.horizontal, 18).padding(.top, 18).padding(.bottom, 6) }
                 toolbar
@@ -302,22 +347,16 @@ struct NovelReaderView: View {
     }
 
     private func toolIcon(_ t: Tab, _ icon: String?, _ name: String) -> some View {
-        Button { withAnimation(.easeOut(duration: 0.18)) { tab = tab == t ? nil : t } } label: {
-            Group { if let icon { Image(systemName: icon).font(.system(size: 21, weight: .light)) } else { Text("A").font(.system(size: 23, weight: .light)) } }
-                .foregroundStyle(tab == t ? NovelLayout.accent : pal.ink.opacity(0.85))
-                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        let on = tab == t || (t == .font && (tab == .fonts || tab == .turn))
+        return Button { withAnimation(.easeOut(duration: 0.18)) { tab = on ? nil : t } } label: {
+            Group {
+                if let icon { Image(systemName: icon).font(.system(size: 21, weight: .light)) }
+                else { Text("A").font(.system(size: 23, weight: .light)) }
+            }
+            .foregroundStyle(on ? NovelLayout.accent : pal.ink.opacity(0.85))
+            .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain).accessibilityLabel(name).accessibilityIdentifier("novel.menu.\(name)")
-    }
-
-    private var listenButton: some View {
-        Button {
-            if speaker.speaking { speaker.stop() } else { startSpeaking() }
-        } label: {
-            Text(speaker.speaking ? "停" : "听").font(.system(size: 20, weight: .medium)).foregroundStyle(.white)
-                .frame(width: 48, height: 48).background(Circle().fill(Color(white: 0.2).opacity(0.88)))
-        }
-        .buttonStyle(.plain).accessibilityIdentifier("novel.listen")
     }
 
     @ViewBuilder private func panel(_ t: Tab) -> some View {
@@ -327,6 +366,9 @@ struct NovelReaderView: View {
         case .progress: progressPanel
         case .light: lightPanel
         case .font: fontPanel
+        case .fonts: fontsPanel
+        case .turn: turnPanel
+        case .listen: listenPanel
         }
     }
 
@@ -336,6 +378,30 @@ struct NovelReaderView: View {
                 .frame(maxWidth: .infinity, minHeight: 40).background(Capsule().fill(pal.track.opacity(0.75)))
         }
         .buttonStyle(.plain)
+    }
+
+    private func chip(_ title: String, on: Bool, id: String? = nil, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                .foregroundStyle(on ? NovelLayout.accent : pal.ink)
+                .padding(.horizontal, 12).frame(minHeight: 32)
+                .background(Capsule().fill(on ? NovelLayout.accent.opacity(0.12) : pal.track.opacity(0.6)))
+                .overlay(Capsule().stroke(on ? NovelLayout.accent : .clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id ?? "novel.chip.\(title)")
+    }
+
+    private func subHeader(_ t: String) -> some View {
+        HStack {
+            Button { withAnimation(.easeOut(duration: 0.18)) { tab = .font } } label: {
+                Image(systemName: "chevron.left").font(.system(size: 15, weight: .medium)).frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            Text(t).font(.system(size: 15, weight: .semibold))
+            Spacer()
+        }
+        .foregroundStyle(pal.ink)
     }
 
     // 进度
@@ -348,17 +414,19 @@ struct NovelReaderView: View {
                 Divider().frame(height: 34)
                 stat(read >= 3600 ? "\(Int(read / 3600))" : "\(Int(read / 60))", read >= 3600 ? "小时\(Int(read.truncatingRemainder(dividingBy: 3600) / 60))分钟" : "分钟", "阅读时长")
                 Divider().frame(height: 34)
-                stat("\(chapter + 1)", "/\(book.chapters.count)", "章节")
+                stat("\(ref.chapter + 1)", "/\(book.chapters.count)", "章节")
             }
             HStack(spacing: 0) {
-                Button { go(chapter - 1) } label: { Image(systemName: "chevron.left").frame(width: 40, height: 44) }.disabled(chapter == 0)
+                Button { go(ref.chapter - 1) } label: { Image(systemName: "chevron.left").frame(width: 40, height: 44) }.disabled(ref.chapter == 0)
                 PillSlider(value: Binding(get: { fraction }, set: { jump(toFraction: $0) }), track: .clear, thumb: pal.thumb)
-                Button { go(chapter + 1) } label: { Image(systemName: "chevron.right").frame(width: 40, height: 44) }.disabled(chapter + 1 >= book.chapters.count)
+                Button { go(ref.chapter + 1) } label: { Image(systemName: "chevron.right").frame(width: 40, height: 44) }.disabled(ref.chapter + 1 >= book.chapters.count)
             }
             .foregroundStyle(pal.ink).background(Capsule().fill(pal.track))
             HStack(spacing: 14) {
-                pill("回到本章开头") { go(chapter) }
-                pill(autoTurn ? "关闭自动翻页" : "开启自动翻页") { autoTurn.toggle(); if autoTurn { hideMenu() } }
+                pill("回到本章开头") { go(ref.chapter) }
+                if prefs.turn != .scroll {
+                    pill(autoTurn ? "关闭自动翻页" : "开启自动翻页") { autoTurn.toggle(); if autoTurn { hideMenu() } }
+                }
             }
         }
     }
@@ -411,21 +479,80 @@ struct NovelReaderView: View {
                     trailing: AnyView(Text("松").font(.system(size: 13)).foregroundStyle(pal.ink)))
             }
             HStack(spacing: 12) {
-                Menu {
-                    Picker("字体样式", selection: $prefs.serif) { Text("系统字体").tag(false); Text("宋体").tag(true) }
-                } label: { menuPill("字体样式") }
-                Button { prefs.indent.toggle() } label: { menuPill(prefs.indent ? "首行缩进" : "不缩进") }.buttonStyle(.plain)
-                Menu {
-                    Picker("翻页方式", selection: $prefs.turn) { Text("左右滑动").tag(NovelPrefs.Turn.slide); Text("上下滚动").tag(NovelPrefs.Turn.scroll) }
-                } label: { menuPill(prefs.turn == .slide ? "左右滑动" : "上下滚动") }
+                menuPill(NovelFonts.all.first { $0.id == prefs.fontID }?.name ?? "字体样式", id: "novel.fonts") { tab = .fonts }
+                menuPill(prefs.indent ? "首行缩进" : "不缩进", id: "novel.indent") { prefs.indent.toggle() }
+                menuPill(prefs.turn.label, id: "novel.turn") { tab = .turn }
             }
         }
     }
 
-    private func menuPill(_ t: String) -> some View {
-        HStack(spacing: 2) { Text(t); Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)) }
-            .font(.system(size: 14, weight: .medium)).foregroundStyle(pal.ink)
-            .frame(maxWidth: .infinity, minHeight: 40).background(Capsule().fill(pal.track.opacity(0.75)))
+    private func menuPill(_ t: String, id: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 2) { Text(t).lineLimit(1); Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)) }
+                .font(.system(size: 14, weight: .medium)).foregroundStyle(pal.ink)
+                .frame(maxWidth: .infinity, minHeight: 40).background(Capsule().fill(pal.track.opacity(0.75)))
+        }
+        .buttonStyle(.plain).accessibilityIdentifier(id)
+    }
+
+    // 字体样式
+    private var fontsPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            subHeader("字体样式")
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(NovelFonts.all) { f in fontRow(f) }
+                }
+            }
+            .frame(maxHeight: 330)
+        }
+    }
+
+    private func fontRow(_ f: NovelFonts.Entry) -> some View {
+        let ready = fonts.isReady(f.id)
+        let on = prefs.fontID == f.id
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(f.name).font(Font(NovelFonts.font(f.id, size: 17) as CTFont)).foregroundStyle(pal.ink)
+                Text(fonts.errors[f.id] ?? f.note).font(.system(size: 11)).foregroundStyle(fonts.errors[f.id] == nil ? pal.secondary : .red)
+            }
+            Spacer()
+            if let p = fonts.progress[f.id] {
+                ProgressView(value: p).frame(width: 60).tint(NovelLayout.accent)
+            } else if on {
+                Image(systemName: "checkmark").foregroundStyle(NovelLayout.accent)
+            } else if !ready {
+                Text(f.bytes > 0 ? "下载 \(f.bytes / 1_000_000)MB" : "下载").font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(NovelLayout.accent)
+                    .padding(.horizontal, 10).frame(minHeight: 28).overlay(Capsule().stroke(NovelLayout.accent, lineWidth: 1))
+            }
+        }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture { if ready { prefs.fontID = f.id } else { fonts.fetch(f.id) } }
+        .contextMenu { if fonts.downloaded(f.id) { Button("删除已下载的字体", role: .destructive) { if on { prefs.fontID = "system" }; fonts.delete(f.id) } } }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("novel.font.\(f.id)")
+    }
+
+    // 翻页方式
+    private var turnPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            subHeader("翻页方式")
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
+                ForEach(NovelTurnStyle.allCases) { t in
+                    chip(t.label, on: prefs.turn == t, id: "novel.turn.\(t.rawValue)") {
+                        let c = ref.chapter, o = offsetInChapter
+                        prefs.turn = t
+                        autoTurn = false
+                        ref = paginator.ref(chapter: c, offset: o)
+                        version += 1
+                    }
+                }
+            }
+            Text("仿真：像纸书一样卷页；滑动：两页并排滑过；覆盖：当前页盖在下一页上被拖走；上下滚动：整本书连续滚动。左右轻点也能翻页。")
+                .font(.system(size: 11)).foregroundStyle(pal.secondary)
+        }
     }
 
     // 书籍信息
@@ -488,7 +615,7 @@ struct NovelReaderView: View {
                                 let h = hits[i]
                                 Button { jump(chapter: h.chapter, offset: h.offset) } label: {
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(book.chapters[h.chapter].title).font(.system(size: 12)).foregroundStyle(pal.secondary)
+                                        Text(title(h.chapter)).font(.system(size: 12)).foregroundStyle(pal.secondary)
                                         Text(h.snippet).font(.system(size: 15)).foregroundStyle(pal.ink).lineLimit(2)
                                     }
                                     .padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
@@ -502,32 +629,32 @@ struct NovelReaderView: View {
                         }
                     }
                 }
-                .onAppear { proxy.scrollTo(chapter, anchor: .center) }
+                .onAppear { proxy.scrollTo(ref.chapter, anchor: .center) }
             }
         }
         .frame(height: 460)
     }
 
     private func tocRow(_ i: Int) -> some View {
-        let cur = i == chapter
+        let cur = i == ref.chapter
+        let per = max(1, Double(paginator.chapter(ref.chapter).text.length) / Double(max(1, paginator.pageCount(ref.chapter))))
         return VStack(alignment: .leading, spacing: 0) {
             Button { go(i); hideMenu() } label: {
                 HStack {
-                    Text(book.chapters[i].title).font(.system(size: 16, weight: cur ? .bold : .regular)).foregroundStyle(pal.ink).lineLimit(1)
+                    Text(title(i)).font(.system(size: 16, weight: cur ? .bold : .regular)).foregroundStyle(pal.ink).lineLimit(1)
                     Spacer()
-                    Text("\(Int(Double(book.chapters[i].start) / charsPerPage) + 1)").font(.system(size: 13).monospacedDigit()).foregroundStyle(pal.secondary)
+                    Text("\(Int(Double(book.chapters[i].start) / per) + 1)").font(.system(size: 13).monospacedDigit()).foregroundStyle(pal.secondary)
                 }
                 .padding(.vertical, 13).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(book.chapters[i].title)
-            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(title(i))
             if cur {
                 HStack(spacing: 6) {
                     Image(systemName: "book").font(.system(size: 13))
                     Text("当前读到").font(.system(size: 14))
                     Spacer()
-                    Text("\(Int(Double(bookOffset) / charsPerPage) + 1)").font(.system(size: 13).monospacedDigit()).foregroundStyle(pal.secondary)
+                    Text("\(Int(Double(bookOffset) / per) + 1)").font(.system(size: 13).monospacedDigit()).foregroundStyle(pal.secondary)
                 }
                 .foregroundStyle(NovelLayout.accent).padding(.leading, 14).padding(.bottom, 12)
             }
@@ -536,66 +663,141 @@ struct NovelReaderView: View {
         .id(i)
     }
 
+    // 听书
+    private var listenButton: some View {
+        Button { if !speaker.active { startListening() }; withAnimation(.easeOut(duration: 0.18)) { tab = .listen } } label: {
+            Text("听").font(.system(size: 20, weight: .medium)).foregroundStyle(.white)
+                .frame(width: 48, height: 48).background(Circle().fill(Color(white: 0.2).opacity(0.88)))
+        }
+        .buttonStyle(.plain).accessibilityIdentifier("novel.listen")
+    }
+
+    /// While reading aloud with the menu closed: state + play / pause, tap to open the 听书 panel.
+    private var miniPlayer: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform").symbolEffect(.variableColor.iterative, isActive: !speaker.paused)
+                .font(.system(size: 15)).foregroundStyle(NovelLayout.accent)
+            Text(speaker.paused ? "已暂停" : "朗读中").font(.system(size: 13, weight: .medium)).foregroundStyle(pal.ink)
+            Button { speaker.toggle() } label: {
+                Image(systemName: speaker.paused ? "play.fill" : "pause.fill").font(.system(size: 13)).foregroundStyle(pal.ink)
+                    .frame(width: 30, height: 30).background(Circle().fill(pal.track))
+            }
+            .buttonStyle(.plain).accessibilityIdentifier("novel.mini.toggle")
+        }
+        .padding(.leading, 14).padding(.trailing, 6).frame(height: 42)
+        .background(Capsule().fill(pal.panel).shadow(color: .black.opacity(0.15), radius: 6, y: 2))
+        .onTapGesture { showMenu(); tab = .listen }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("novel.miniplayer")
+    }
+
+    private var listenPanel: some View {
+        let voices = NovelSpeaker.voices
+        let current = voices.first { $0.identifier == speaker.voiceID } ?? voices.first { $0.language == "zh-CN" }
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title(speaker.chapter)).font(.system(size: 16, weight: .semibold)).foregroundStyle(pal.ink).lineLimit(1)
+                    Text(!speaker.active ? "未开始" : speaker.paused ? "已暂停" : "正在朗读 · 读到的句子会高亮")
+                        .font(.system(size: 12)).foregroundStyle(pal.secondary)
+                        .accessibilityIdentifier("novel.listen.state")
+                }
+                Spacer()
+                Button("退出听书") { speaker.stop(); withAnimation { tab = nil } }
+                    .font(.system(size: 13)).foregroundStyle(pal.secondary)
+                    .accessibilityIdentifier("novel.listen.stop")
+            }
+            HStack {
+                listenControl("backward.end.fill", "上一章", 17) { listenChapter(-1) }
+                listenControl("gobackward", "上一句", 19) { speaker.skip(-1) }
+                Button { speaker.active ? speaker.toggle() : startListening() } label: {
+                    Image(systemName: speaker.active && !speaker.paused ? "pause.fill" : "play.fill").font(.system(size: 22))
+                        .foregroundStyle(.white).frame(width: 58, height: 58).background(Circle().fill(NovelLayout.accent))
+                }
+                .buttonStyle(.plain).frame(maxWidth: .infinity)
+                .accessibilityLabel(speaker.active && !speaker.paused ? "暂停" : "播放").accessibilityIdentifier("novel.listen.toggle")
+                listenControl("goforward", "下一句", 19) { speaker.skip(+1) }
+                listenControl("forward.end.fill", "下一章", 17) { listenChapter(+1) }
+            }
+            optionRow("语速") {
+                ForEach([0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { v in
+                    chip(v == 1 ? "1.0x" : "\(v.formatted())x", on: abs(speaker.speed - v) < 0.01) { speaker.speed = v }
+                }
+            }
+            optionRow("定时") {
+                chip("关闭", on: speaker.sleep == .off) { speaker.sleep = .off }
+                ForEach([15, 30, 60], id: \.self) { m in chip("\(m)分钟", on: speaker.sleep == .minutes(m)) { speaker.sleep = .minutes(m) } }
+                chip("本章结束", on: speaker.sleep == .chapterEnd) { speaker.sleep = .chapterEnd }
+            }
+            if let until = speaker.sleepUntil {
+                Text("将于 \(until.formatted(date: .omitted, time: .shortened)) 停止").font(.system(size: 11)).foregroundStyle(pal.secondary)
+            }
+            HStack(spacing: 10) {
+                Text("音色").font(.system(size: 13)).foregroundStyle(pal.secondary).frame(width: 34, alignment: .leading)
+                Menu {
+                    Picker("音色", selection: Binding(get: { current?.identifier ?? "" }, set: { speaker.voiceID = $0 })) {
+                        ForEach(voices, id: \.identifier) { v in Text(NovelSpeaker.label(v)).tag(v.identifier) }
+                    }
+                } label: {
+                    HStack { Text(current.map(NovelSpeaker.label) ?? "系统默认").lineLimit(1); Spacer(); Image(systemName: "chevron.up.chevron.down").font(.system(size: 11)) }
+                        .font(.system(size: 14)).foregroundStyle(pal.ink)
+                        .padding(.horizontal, 14).frame(minHeight: 36).background(Capsule().fill(pal.track.opacity(0.6)))
+                }
+            }
+            Text("想要更自然的声音：iOS 设置 → 辅助功能 → 朗读内容 → 声音 → 中文，下载「增强 / 高级」音色。锁屏或切到后台会继续朗读。")
+                .font(.system(size: 11)).foregroundStyle(pal.secondary)
+        }
+    }
+
+    private func listenControl(_ icon: String, _ label: String, _ size: CGFloat, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: size)).foregroundStyle(pal.ink).frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.plain).disabled(!speaker.active && label.hasSuffix("句")).accessibilityLabel(label)
+    }
+
+    private func optionRow<C: View>(_ name: String, @ViewBuilder _ content: () -> C) -> some View {
+        HStack(spacing: 10) {
+            Text(name).font(.system(size: 13)).foregroundStyle(pal.secondary).frame(width: 34, alignment: .leading)
+            ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 8) { content() } }
+        }
+    }
+
     // MARK: Logic
 
     private var screen: UIScreen? {
         (UIApplication.shared.connectedScenes.first { $0 is UIWindowScene } as? UIWindowScene)?.screen
     }
-    private var currentOffset: Int { pages.indices.contains(page) ? pages[page].location : 0 }
 
-    private func showMenu() { withAnimation(.easeOut(duration: 0.2)) { menu = true } }
+    private func showMenu() { withAnimation(.easeOut(duration: 0.2)) { menu = true; hint = false } }
     private func hideMenu() { withAnimation(.easeOut(duration: 0.2)) { menu = false; tab = nil; tocSearch = false } }
 
     private func restore() {
         let p = store.progress[book.id]
-        chapter = min(max(0, p?.chapter ?? 0), max(0, book.chapters.count - 1))
-        relayout(keepOffset: p?.offset ?? 0)
+        let c = min(max(0, p?.chapter ?? 0), max(0, book.chapters.count - 1))
+        ref = paginator.ref(chapter: c, offset: p?.offset ?? 0)
+        ready = true
     }
 
-    /// Re-paginates the current chapter and lands on the page containing `offset` (Int.max = last page).
-    private func relayout(keepOffset offset: Int) {
-        let text = store.chapterText(book, chapter)
-        attributed = NovelLayout.attributed(text, title: chapterTitle, size: prefs.fontSize, lineSpacing: prefs.lineSpacing,
-            indent: prefs.indent, serif: prefs.serif, color: pal.text)
-        pages = NovelLayout.paginate(attributed, size: pageSize)
-        page = offset == .max ? pages.count - 1 : (pages.lastIndex { $0.location <= offset } ?? 0)
-        save()
-    }
-
-    private func go(_ i: Int, atEnd: Bool = false) {
+    private func go(_ i: Int) {
         guard book.chapters.indices.contains(i) else { return }
-        chapter = i
-        relayout(keepOffset: atEnd ? .max : 0)
-        if speaker.speaking { startSpeaking() }
+        jump(chapter: i, offset: 0, keepMenu: true)
     }
 
-    private func jump(chapter i: Int, offset: Int) {
-        chapter = i
-        relayout(keepOffset: offset)
-        hideMenu()
+    private func jump(chapter i: Int, offset: Int, keepMenu: Bool = false) {
+        ref = paginator.ref(chapter: i, offset: offset)
+        version += 1
+        save()
+        if speaker.active { startListening() }
+        if !keepMenu { hideMenu() }
     }
 
     private func jump(toFraction f: Double) {
         let target = Int(f * Double(totalChars))
         let i = book.chapters.lastIndex { $0.start <= target } ?? 0
-        if i != chapter { chapter = i; relayout(keepOffset: target - book.chapters[i].start) }
-        else { page = pages.lastIndex { $0.location <= target - book.chapters[i].start } ?? 0; save() }
-    }
-
-    private func turn(_ d: Int) {
-        forward = d > 0
-        withAnimation(.easeInOut(duration: 0.25)) {
-            if d > 0 {
-                if page + 1 < pages.count { page += 1; save() } else if chapter + 1 < book.chapters.count { go(chapter + 1) } else { autoTurn = false }
-            } else {
-                if page > 0 { page -= 1; save() } else if chapter > 0 { go(chapter - 1, atEnd: true) }
-            }
-        }
-    }
-
-    private func tap(at x: CGFloat, width: CGFloat) {
-        if menu { hideMenu(); return }
-        if x < width / 3 { turn(-1) } else if x > width * 2 / 3 { turn(+1) } else { showMenu() }
+        ref = paginator.ref(chapter: i, offset: target - book.chapters[i].start)
+        version += 1
+        save()
     }
 
     private func search() {
@@ -616,23 +818,42 @@ struct NovelReaderView: View {
         hits = found.map { (chapter: $0.0, offset: $0.1, snippet: $0.2) }
     }
 
-    private func startSpeaking() {
-        speaker.onFinish = { [chapter] in
-            if chapter + 1 < book.chapters.count { forward = true; go(chapter + 1) } else { speaker.stop() }
+    /// 听书 from the top of the visible page; at a chapter's end continues with the next one.
+    private func startListening() {
+        speaker.nowPlaying = (book.title, title(ref.chapter))
+        speaker.onChapterEnd = { ch in
+            guard ch + 1 < book.chapters.count else { speaker.stop(); return }
+            speaker.nowPlaying = (book.title, title(ch + 1))
+            speaker.start(chapter: ch + 1, text: store.chapterText(book, ch + 1), from: 0)
         }
-        speaker.speak(store.chapterText(book, chapter), from: currentOffset)
+        speaker.start(chapter: ref.chapter, text: store.chapterText(book, ref.chapter), from: offsetInChapter)
     }
 
-    /// 听: keep the visible page on the sentence being read.
-    private func followSpeech(_ p: Int) {
-        guard speaker.speaking, let i = pages.lastIndex(where: { $0.location <= p }), i != page else { return }
-        forward = i > page
-        withAnimation(.easeInOut(duration: 0.25)) { page = i }
+    private func listenChapter(_ d: Int) {
+        let c = (speaker.active ? speaker.chapter : ref.chapter) + d
+        guard book.chapters.indices.contains(c) else { return }
+        ref = paginator.ref(chapter: c, offset: 0)
+        version += 1
+        startListening()
+    }
+
+    /// Keeps the page on the sentence being read (turning with the current animation when it is the next page).
+    private func follow(_ s: NSRange) {
+        let target = paginator.ref(chapter: speaker.chapter, offset: s.location)
+        guard target != ref else { return }
+        if prefs.turn == .scroll {
+            ref = target // the scroll view follows the sentence itself (scrollReader)
+        } else if paginator.next(ref) == target, let c = handle.controller {
+            c.turn(+1)
+        } else {
+            ref = target
+        }
         save()
     }
 
-    private func save() { store.record(book, chapter: chapter, offset: currentOffset) }
+    private func save() { store.record(book, chapter: ref.chapter, offset: offsetInChapter) }
 }
+
 
 /// WeRead's capsule slider: a full-height round thumb (optionally labelled) on a pill track.
 struct PillSlider: View {

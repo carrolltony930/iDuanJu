@@ -33,9 +33,9 @@ final class NovelUITests: XCTestCase {
         // Right third → next page; left third → back.
         let win = app.windows.firstMatch
         win.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        XCTAssertEqual(pageLabel().0, p0 + 1, "tap right did not turn the page")
+        waitPage(p0 + 1, "tap right did not turn the page")
         win.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).tap()
-        XCTAssertEqual(pageLabel().0, p0, "tap left did not go back")
+        waitPage(p0, "tap left did not go back")
 
         // Middle → menu; 目录 → 第三章.
         win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
@@ -69,5 +69,99 @@ final class NovelUITests: XCTestCase {
         win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()   // close the menu
         XCTAssertGreaterThan(pageLabel().1, before, "bigger font did not add pages")
         shot("novel_05_paper")
+    }
+
+    func openSample() {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchEnvironment["STV_HOME_TAB"] = "novel"
+        app.launchEnvironment["STV_NOVEL_SEED"] = Self.sample
+        app.launch()
+        let book = el("novel.book.novel_sample_gbk")
+        XCTAssertTrue(book.waitForExistence(timeout: 10))
+        book.tap()
+        XCTAssertTrue(el("novel.page").waitForExistence(timeout: 5))
+    }
+
+    func setTurn(_ raw: Int) {
+        let win = app.windows.firstMatch
+        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        el("novel.menu.设置").tap()
+        el("novel.turn").tap()
+        XCTAssertTrue(el("novel.turn.\(raw)").waitForExistence(timeout: 3))
+        el("novel.turn.\(raw)").tap()
+        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()   // close the menu
+    }
+
+    func waitPage(_ want: Int, _ msg: String) {
+        let end = Date().addingTimeInterval(3)
+        while Date() < end, pageLabel().0 != want { Thread.sleep(forTimeInterval: 0.2) }
+        XCTAssertEqual(pageLabel().0, want, msg)
+    }
+
+    /// 仿真 / 滑动 / 覆盖 / 无动画: tap the right third and drag right-to-left both turn forward; tap left goes back.
+    func testTurnStyles() {
+        openSample()
+        let win = app.windows.firstMatch
+        // The hint fades out after a few seconds (WeRead shows it only when the book opens).
+        XCTAssertTrue(app.staticTexts["↑上滑显示工具栏"].exists)
+        Thread.sleep(forTimeInterval: 4)
+        XCTAssertFalse(app.staticTexts["↑上滑显示工具栏"].exists, "hint did not go away")
+        for (raw, name) in [(0, "curl"), (1, "slide"), (2, "cover"), (3, "none")] {
+            setTurn(raw)
+            let p = pageLabel().0
+            win.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+            waitPage(p + 1, "\(name): tap right")
+            let from = win.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55))
+            from.press(forDuration: 0.05, thenDragTo: win.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.55)))
+            waitPage(p + 2, "\(name): drag left")
+            if raw == 1 { shot("novel_turn_slide") }
+            win.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).tap()
+            waitPage(p + 1, "\(name): tap left")
+        }
+    }
+
+    /// 听书 reads aloud, pauses, and the page follows the sentence being read.
+    func testListen() {
+        openSample()
+        let win = app.windows.firstMatch
+        let start = pageLabel().0
+        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        el("novel.listen").tap()
+        let state = el("novel.listen.state")
+        XCTAssertTrue(state.waitForExistence(timeout: 3))
+        XCTAssertTrue(state.label.hasPrefix("正在朗读"), state.label)
+        shot("novel_listen")
+        el("novel.listen.toggle").tap()
+        XCTAssertEqual(state.label, "已暂停")
+        el("novel.listen.toggle").tap()
+        XCTAssertTrue(state.label.hasPrefix("正在朗读"))
+        // Skip ahead sentence by sentence: the page turns with the reading position.
+        let next = app.buttons["下一句"]
+        for _ in 0..<14 { next.tap() }
+        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()   // close the menu
+        XCTAssertTrue(el("novel.miniplayer").waitForExistence(timeout: 3), "mini player missing while reading")
+        let end = Date().addingTimeInterval(5)
+        while Date() < end, pageLabel().0 <= start { Thread.sleep(forTimeInterval: 0.3) }
+        XCTAssertGreaterThan(pageLabel().0, start, "page did not follow 听书")
+        shot("novel_listen_follow")
+        el("novel.mini.toggle").tap()
+    }
+
+    /// 字体样式 panel lists the fonts; picking 楷体 (an iOS system font, downloaded by the system if needed) applies it.
+    func testFontsPanel() {
+        openSample()
+        let win = app.windows.firstMatch
+        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        el("novel.menu.设置").tap()
+        el("novel.fonts").tap()
+        XCTAssertTrue(el("novel.font.wenkai").waitForExistence(timeout: 3), "font list missing")
+        XCTAssertTrue(el("novel.font.sourceserif").exists)
+        shot("novel_fonts")
+        el("novel.font.kaiti").tap()
+        let end = Date().addingTimeInterval(60)
+        while Date() < end, !el("novel.fonts").exists { el("novel.font.kaiti").tap(); Thread.sleep(forTimeInterval: 2); if el("novel.font.kaiti").label.contains("楷体") && app.images["checkmark"].exists { break } }
+        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        shot("novel_kaiti")
     }
 }

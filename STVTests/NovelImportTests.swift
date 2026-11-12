@@ -75,4 +75,33 @@ final class NovelImportTests: XCTestCase {
         let big = NovelLayout.paginate(NovelLayout.attributed(text, title: c.title, size: 26, spacing: 2, serif: true, color: .black), size: CGSize(width: 330, height: 600))
         XCTAssertGreaterThan(big.count, pages.count)
     }
+
+    func testSentenceSplitForListening() {
+        let t = "她说：“走吧。”他没回答！雨还在下……\n第二段没有句号"
+        let ns = t as NSString
+        let parts = NovelSpeaker.sentences(t, from: 0).map { ns.substring(with: $0) }
+        XCTAssertEqual(parts, ["她说：“走吧。”", "他没回答！", "雨还在下……\n", "第二段没有句号"])
+        // Starting mid-text begins at that offset.
+        XCTAssertEqual(NovelSpeaker.sentences(t, from: 8).first.map { ns.substring(with: $0) }, "他没回答！")
+    }
+
+    /// Pages render their slice alone; a slice that starts mid-paragraph must still fit the page height.
+    @MainActor func testPageSliceFitsWhenStartingMidParagraph() throws {
+        let p = try NovelImport.parse(try fixture("novel_sample_gbk.txt"), fileName: "a.txt")
+        let c = p.chapters[0]
+        let text = (p.text as NSString).substring(with: NSRange(location: c.start, length: c.length))
+        let s = NovelLayout.attributed(text, title: c.title, size: 19, lineSpacing: 0.5, serif: false, color: .black)
+        let size = CGSize(width: 330, height: 600)
+        let pages = NovelLayout.paginate(s, size: size)
+        let ns = s.string as NSString
+        let mid = try XCTUnwrap(pages.dropFirst().first { ns.character(at: $0.location - 1) != 10 }, "fixture should have a page starting mid-paragraph")
+        // Render the slice the way NovelPageView does and measure it.
+        let t = NSMutableAttributedString(attributedString: s.attributedSubstring(from: mid))
+        if let ps = t.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle {
+            let m = ps.mutableCopy() as! NSMutableParagraphStyle
+            m.firstLineHeadIndent = 0
+            t.addAttribute(.paragraphStyle, value: m, range: (t.string as NSString).paragraphRange(for: NSRange(location: 0, length: 0)))
+        }
+        XCTAssertEqual(NovelLayout.paginate(t, size: size).count, 1, "the page's own text must fit on one page")
+    }
 }
