@@ -165,6 +165,13 @@ import UIKit
         engine.play()
     }
 
+    /// Play through a stale audio interruption (BEGAN with no ENDED). Aether holds the first press while it
+    /// thinks the session is interrupted and lets a second one through after re-activating it.
+    func playThroughInterruption(rate: Double) {
+        play(rate: rate)
+        if engine.state != .playing { engine.play() }
+    }
+
     func pause() { engine.pause() }
     func setRate(_ rate: Double) { engine.setRate(Float(rate)) }
     func seek(to seconds: Double) async { await engine.seek(to: seconds) }

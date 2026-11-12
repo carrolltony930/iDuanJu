@@ -59,6 +59,24 @@ final class PlayerUITests: XCTestCase {
         XCTAssertTrue(waitOrientation(landscape: false), "rotating back did not exit landscape")
     }
 
+    /// An audio interruption that never sends `.ended` (another app took audio / PiP interrupted): one tap on ▶ must resume.
+    func testPlayAfterInterruptionWithoutEnd() {
+        launch(["STV_FAKE_INTERRUPT": "3"])
+        let bar = el("player.progress")
+        XCTAssertTrue(bar.waitForExistence(timeout: 20), "player did not become ready")
+        Thread.sleep(forTimeInterval: 5)
+        showChrome("player.progress")
+        let t1 = seconds(el("player.progress").value as? String ?? "")
+        Thread.sleep(forTimeInterval: 2)
+        showChrome("player.progress")
+        XCTAssertEqual(seconds(el("player.progress").value as? String ?? ""), t1, "fake interruption did not stop playback")
+        showChrome("player.playPause"); el("player.playPause").tap()
+        Thread.sleep(forTimeInterval: 3)
+        showChrome("player.progress")
+        let t2 = seconds(el("player.progress").value as? String ?? "")
+        XCTAssertGreaterThanOrEqual(t2 - t1, 2, "▶ after an interruption did not resume: \(t1)s → \(t2)s")
+    }
+
     /// Side taps: double tap = 10 s, a third tap in the streak keeps going (20 s total), bubble on that side.
     /// The fixture is 60 s long, so seek toward whichever end has room; tap below the centre controls.
     func testDoubleTapSeekAccumulates() {
