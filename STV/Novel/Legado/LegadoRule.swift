@@ -2,6 +2,7 @@ import Foundation
 import CommonCrypto
 import Compression
 import CryptoKit
+import Security
 
 /// Regex "all in one" match (`:regex` list rules): group texts, `$0` = whole match.
 struct LegadoGroups { var groups: [String] }
@@ -34,6 +35,8 @@ final class LegadoContext {
     /// Operation-local values (`@put` inside one rule run) — `java.put` also persists them.
     var vars: [String: String] = [:]
     private var inHeaders = false
+    /// Login page actions may open the in-app browser; normal operations may not.
+    var interactive = false
     /// Jsoup handles for scripts (`org.jsoup.Jsoup.parse`, `java.getElement`): index into this table.
     private var jsNodes: [LegadoNode] = []
     private func handle(_ n: LegadoNode) -> Int { jsNodes.append(n); return jsNodes.count - 1 }
@@ -64,7 +67,10 @@ final class LegadoContext {
     }
 
     var sourceJSON: [String: Any] {
-        ["bookSourceUrl": source.bookSourceUrl, "bookSourceName": source.bookSourceName, "bookSourceGroup": source.bookSourceGroup ?? ""]
+        // Scripts read these (乐读 evals its bookSourceComment; others read header / loginUrl).
+        ["bookSourceUrl": source.bookSourceUrl, "bookSourceName": source.bookSourceName, "bookSourceGroup": source.bookSourceGroup ?? "",
+            "bookSourceComment": source.bookSourceComment ?? "", "header": source.header ?? "", "loginUrl": source.loginUrl ?? "",
+            "searchUrl": source.searchUrl ?? "", "exploreUrl": source.exploreUrl ?? "", "bookSourceType": source.bookSourceType ?? 0]
     }
 
     private func host(_ name: String, _ a: [String: Any]) throws -> Any? {
@@ -128,6 +134,12 @@ final class LegadoContext {
         case "cipher":
             return LegadoBytes.json(try LegadoBytes.cipher(s("t"), encrypt: (a["mode"] as? Int) == 1, key: LegadoBytes.data(a["key"]),
                     iv: a["iv"].map(LegadoBytes.data), data: LegadoBytes.data(a["b"])))
+        case "rsa.dec":
+            if a["priv"] is [Any], let k = a["priv"], !LegadoBytes.data(k).isEmpty {
+                return LegadoBytes.json(try LegadoBytes.rsaPrivateDecrypt(key: LegadoBytes.data(k), data: LegadoBytes.data(a["b"])))
+            }
+            return LegadoBytes.json(try LegadoBytes.rsaPublicDecrypt(key: LegadoBytes.data(a["key"]), data: LegadoBytes.data(a["b"])))
+        case "rsa.enc": return LegadoBytes.json(try LegadoBytes.rsaPublicEncrypt(key: LegadoBytes.data(a["key"]), data: LegadoBytes.data(a["b"])))
         case "inflate": return LegadoBytes.json(try LegadoBytes.inflate(LegadoBytes.data(a["b"]), raw: a["nowrap"] as? Bool ?? false))
         case "jsoup.parse": return handle(LegadoDoc(s("html")).node)
         case "jsoup.select":
@@ -147,6 +159,23 @@ final class LegadoContext {
         case "jsoup.html": return nodes(a["h"]).map { $0.html(outer: false) }.joined(separator: "\n")
         case "jsoup.outer": return nodes(a["h"]).map { $0.html(outer: true) }.joined(separator: "\n")
         case "ua": return LegadoHTTP.userAgent
+        case "convert": return s("s").applyingTransform(StringTransform(rawValue: s("to")), reverse: false) ?? s("s")
+        case "uuid": return UUID().uuidString.lowercased()
+        case "cookieRemove":
+            if let u = URL(string: LegadoURL.absolute(s("url"), base: source.bookSourceUrl)) {
+                (HTTPCookieStorage.shared.cookies(for: u) ?? []).forEach(HTTPCookieStorage.shared.deleteCookie)
+            }
+            return nil
+        case "cookieSet":
+            if let u = URL(string: LegadoURL.absolute(s("url"), base: source.bookSourceUrl)) {
+                let cookies = s("c").split(separator: ";").compactMap { part -> HTTPCookie? in
+                    let kv = part.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                    guard kv.count == 2, let host = u.host else { return nil }
+                    return HTTPCookie(properties: [.name: kv[0], .value: kv[1], .domain: host, .path: "/"])
+                }
+                HTTPCookieStorage.shared.setCookies(cookies, for: u, mainDocumentURL: nil)
+            }
+            return nil
         case "loginInfo":
             let m = LegadoSourceState.loginInfo(source.bookSourceUrl)
             return m.isEmpty ? "" : String(decoding: (try? JSONSerialization.data(withJSONObject: m)) ?? Data(), as: UTF8.self)
@@ -163,6 +192,8 @@ final class LegadoContext {
         case "webView":
             return try LegadoWebView.run(html: a["html"] as? String, url: (a["url"] as? String).map { LegadoURL.absolute($0, base: source.bookSourceUrl) }, js: a["js"] as? String)
         case "browser":
+            // Only from the login page: during 搜书 / 阅读 several sources run at once and a browser would block them.
+            guard interactive else { throw LegadoError.rule("这个操作需要在书源的「登录」页里进行") }
             let u = URL(string: LegadoURL.absolute(s("url"), base: source.bookSourceUrl))
             let title = s("title").isEmpty ? source.bookSourceName : s("title")
             if a["wait"] as? Bool == true {
@@ -591,7 +622,9 @@ final class LegadoAnalyzer {
             if p.count >= 2 {
                 var a = p[0] ?? 0, b = p[1] ?? (n - 1)
                 if a < 0 { a += n }; if b < 0 { b += n }
-                if a <= b { idx += Array(max(0, a)...min(n - 1, b)) } else { idx += stride(from: min(n - 1, a), through: max(0, b), by: -1).map { $0 } }
+                // Clamp first: on a page with fewer items than the rule expects the range must not be built backwards.
+                let lo = max(0, min(a, b)), hi = min(n - 1, max(a, b))
+                if lo <= hi { idx += a <= b ? Array(lo...hi) : Array((lo...hi).reversed()) }
             } else if let i = p[0] {
                 idx.append(i < 0 ? n + i : i)
             }
@@ -734,9 +767,9 @@ enum LegadoURL {
         }
         // options suffix
         var options: [String: Any] = [:]
-        if let r = rule.range(of: ",{", options: .backwards) {
+        if let r = Self.optionsStart(rule) {
             let tail = String(rule[rule.index(after: r.lowerBound)...])
-            if let d = tail.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] {
+            if let o = lenientObject(tail, ctx: ctx) {
                 options = o
                 rule = String(rule[..<r.lowerBound])
             }
@@ -768,10 +801,51 @@ enum LegadoURL {
         return LegadoRequest(request: req, charset: charset, type: options["type"] as? String)
     }
 
+    /// Options objects are often not strict JSON (single quotes, unquoted keys, line breaks): Legado reads them
+    /// leniently, so fall back to evaluating them as a JS object literal.
+    static func lenientObject(_ text: String, ctx: LegadoContext) -> [String: Any]? {
+        if let d = text.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] { return o }
+        guard text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") else { return nil }
+        return (try? ctx.js.eval("JSON.parse(JSON.stringify(" + text + "))", [:])) as? [String: Any]
+    }
+
+    /// The `}}` that closes a `{{` (JS inside may itself contain `}}`, e.g. `})()}}`): the first one that leaves the
+    /// braces balanced.
+    static func closing(_ s: Substring, after start: String.Index) -> Range<String.Index>? {
+        var depth = 0
+        var i = start
+        var quote: Character?
+        while i < s.endIndex {
+            let c = s[i]
+            if let q = quote { if c == "\\" { i = s.index(after: i) } else if c == q { quote = nil } }
+            else if c == "'" || c == "\"" || c == "`" { quote = c }
+            else if c == "{" { depth += 1 }
+            else if c == "}" {
+                if depth == 0, s[i...].hasPrefix("}}") { return i..<s.index(i, offsetBy: 2) }
+                depth -= 1
+            }
+            if i < s.endIndex { i = s.index(after: i) }
+        }
+        return nil
+    }
+
+    /// The `,{` that starts the options object: the last one outside `{{ … }}` (JS inside may contain `,{`).
+    static func optionsStart(_ rule: String) -> Range<String.Index>? {
+        var outside: [Range<String.Index>] = []
+        var i = rule.startIndex, depth = 0
+        while i < rule.endIndex {
+            if rule[i...].hasPrefix("{{") { depth += 1; i = rule.index(i, offsetBy: 2); continue }
+            if depth > 0, rule[i...].hasPrefix("}}") { depth -= 1; i = rule.index(i, offsetBy: 2); continue }
+            if depth == 0, rule[i...].hasPrefix(",{") { outside.append(i..<rule.index(i, offsetBy: 2)) }
+            i = rule.index(after: i)
+        }
+        return outside.last
+    }
+
     /// Replaces `{{key}}`, `{{page}}` and `{{js expression}}`; the keyword is percent-encoded in `charset`.
     static func substitute(_ s: String, ctx: LegadoContext, base: String, charset: String?, encodeKey: Bool) throws -> String {
         var out = "", rest = Substring(s)
-        while let open = rest.range(of: "{{"), let close = rest.range(of: "}}", range: open.upperBound..<rest.endIndex) {
+        while let open = rest.range(of: "{{"), let close = closing(rest, after: open.upperBound) {
             out += rest[..<open.lowerBound]
             let inner = rest[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespaces)
             if inner == "key" { out += encodeKey ? LegadoHTTP.percentEncode(ctx.key ?? "", charset: charset) : (ctx.key ?? "") }
@@ -823,7 +897,11 @@ enum LegadoBytes {
 
     static func data(_ v: Any?) -> Data {
         guard let a = v as? [Any] else { return (v as? String).map { Data($0.utf8) } ?? Data() }
-        return Data(a.map { UInt8(truncatingIfNeeded: ($0 as? Int) ?? Int(($0 as? Double) ?? 0)) })
+        return Data(a.map { v -> UInt8 in
+                if let i = v as? Int { return UInt8(truncatingIfNeeded: i) }
+                guard let d = v as? Double, d.isFinite, abs(d) < 1e15 else { return 0 }
+                return UInt8(truncatingIfNeeded: Int(d))
+        })
     }
 
     /// "AES/CBC/PKCS5Padding", "AES/ECB/NoPadding", "DES/…", "DESede/…".
@@ -848,10 +926,98 @@ enum LegadoBytes {
         return out.prefix(moved)
     }
 
+    // MARK: RSA (hutool-style AsymmetricCrypto)
+
+    /// X.509 SubjectPublicKeyInfo → PKCS#1 RSAPublicKey (what SecKeyCreateWithData wants).
+    static func pkcs1(fromSPKI d: Data) -> Data {
+        let b = [UInt8](d)
+        // SPKI starts with SEQUENCE { SEQUENCE { OID rsaEncryption, NULL }, BIT STRING { RSAPublicKey } }.
+        guard b.count > 24, b[0] == 0x30 else { return d }
+        func len(_ i: inout Int) -> Int {
+            let first = Int(b[i]); i += 1
+            if first < 0x80 { return first }
+            var n = 0
+            for _ in 0..<(first & 0x7f) { n = (n << 8) | Int(b[i]); i += 1 }
+            return n
+        }
+        var i = 1
+        _ = len(&i) // outer SEQUENCE
+        guard i < b.count, b[i] == 0x30 else { return d }
+        i += 1; let algLen = len(&i); i += algLen       // AlgorithmIdentifier
+        guard i < b.count, b[i] == 0x03 else { return d }
+        i += 1; _ = len(&i); i += 1       // BIT STRING (+ unused-bits byte)
+        return i < b.count ? Data(b[i...]) : d
+    }
+
+    static func publicKey(_ der: Data) throws -> SecKey {
+        let attrs: [CFString: Any] = [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPublic]
+        var err: Unmanaged<CFError>?
+        if let k = SecKeyCreateWithData(pkcs1(fromSPKI: der) as CFData, attrs as CFDictionary, &err) { return k }
+        throw LegadoError.rule("RSA 公钥无效")
+    }
+
+    /// Public-key "decryption" (data was produced with the private key): raw RSA per block, then strip
+    /// PKCS#1 v1.5 type-1/2 padding. Blocks are the modulus size.
+    static func rsaPublicDecrypt(key: Data, data: Data) throws -> Data {
+        let k = try publicKey(key)
+        let block = SecKeyGetBlockSize(k)
+        guard block > 11 else { throw LegadoError.rule("RSA 公钥无效") }
+        var out = Data()
+        var off = 0
+        while off < data.count {
+            let chunk = data.subdata(in: off..<min(data.count, off + block))
+            off += block
+            var err: Unmanaged<CFError>?
+            guard let raw = SecKeyCreateEncryptedData(k, .rsaEncryptionRaw, chunk as CFData, &err) as Data? else { throw LegadoError.rule("RSA 解密失败") }
+            let r = [UInt8](raw)
+            // PKCS#1 v1.5: 00 01 FF..FF 00 data (or 00 02 random 00 data). Otherwise NoPadding (Android's default for
+            // Cipher "RSA", which Legado's createAsymmetricCrypto uses): the plaintext is left-padded with zeros.
+            if r.count > 2, r[0] == 0, r[1] == 1 || r[1] == 2, let sep = r[2...].firstIndex(of: 0), sep >= 10 {
+                out.append(contentsOf: r[(sep + 1)...])
+            } else {
+                out.append(contentsOf: r.drop { $0 == 0 })
+            }
+        }
+        return out
+    }
+
+    static func rsaPublicEncrypt(key: Data, data: Data) throws -> Data {
+        let k = try publicKey(key)
+        let block = SecKeyGetBlockSize(k) - 11
+        var out = Data()
+        var off = 0
+        while off < data.count {
+            var err: Unmanaged<CFError>?
+            let chunk = data.subdata(in: off..<min(data.count, off + block))
+            off += block
+            guard let e = SecKeyCreateEncryptedData(k, .rsaEncryptionPKCS1, chunk as CFData, &err) as Data? else { throw LegadoError.rule("RSA 加密失败") }
+            out.append(e)
+        }
+        return out
+    }
+
+    static func rsaPrivateDecrypt(key: Data, data: Data) throws -> Data {
+        let attrs: [CFString: Any] = [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPrivate]
+        var err: Unmanaged<CFError>?
+        guard let k = SecKeyCreateWithData(key as CFData, attrs as CFDictionary, &err) else { throw LegadoError.rule("RSA 私钥无效（需要 PKCS#1 格式）") }
+        let block = SecKeyGetBlockSize(k)
+        var out = Data()
+        var off = 0
+        while off < data.count {
+            let chunk = data.subdata(in: off..<min(data.count, off + block))
+            off += block
+            guard let d = SecKeyCreateDecryptedData(k, .rsaEncryptionPKCS1, chunk as CFData, &err) as Data? else { throw LegadoError.rule("RSA 解密失败") }
+            out.append(d)
+        }
+        return out
+    }
+
     /// Raw deflate (Inflater(true)) or zlib-wrapped (header + adler32 trailer).
     static func inflate(_ d: Data, raw: Bool) throws -> Data {
+        guard !d.isEmpty else { return Data() }
         var src = d
         if !raw, src.count > 6 { src = src.subdata(in: 2..<(src.count - 4)) }
+        guard !src.isEmpty else { return Data() }
         var out = Data()
         let capacity = 64 * 1024
         let dst = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
@@ -860,7 +1026,8 @@ enum LegadoBytes {
         guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else { throw LegadoError.rule("解压失败") }
         defer { compression_stream_destroy(&stream) }
         try src.withUnsafeBytes { (b: UnsafeRawBufferPointer) in
-            stream.src_ptr = b.bindMemory(to: UInt8.self).baseAddress!
+            guard let base = b.bindMemory(to: UInt8.self).baseAddress else { return }
+            stream.src_ptr = base
             stream.src_size = src.count
             while true {
                 stream.dst_ptr = dst

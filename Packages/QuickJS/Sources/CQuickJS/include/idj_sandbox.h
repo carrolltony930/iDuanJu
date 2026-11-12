@@ -15,6 +15,8 @@ typedef struct IDJBox IDJBox;
 typedef char *(*idj_host_fn)(void *opaque, const char *name, const char *args, int *is_error);
 
 IDJBox *idj_new(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque);
+/// idj_new with eval / Function enabled (book-source scripts only; plugins use idj_new).
+IDJBox *idj_new_with_eval(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque);
 /// Runs the trusted prelude (script) and then the plugin (ES module). Returns 0 on success; on failure *err
 /// receives a malloc'd JSON error ({"code","message"}).
 int idj_load(IDJBox *b, const char *prelude, const char *src, const char *filename, double timeout_sec, char **err);

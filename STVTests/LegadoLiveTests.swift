@@ -41,4 +41,24 @@ final class LegadoLiveTests: XCTestCase {
         }
         print("[legado-live]\n" + report.joined(separator: "\n"))
     }
+
+    /// Same as the app's 搜书: every source at once on worker threads (STV_LEGADO_REAL + STV_LEGADO_CONCURRENT=1).
+    func testConcurrentSearch() async throws {
+        guard let dir = ProcessInfo.processInfo.environment["STV_LEGADO_REAL"], ProcessInfo.processInfo.environment["STV_LEGADO_CONCURRENT"] == "1" else { throw XCTSkip("live") }
+        let key = (ProcessInfo.processInfo.environment["STV_LEGADO_KEYS"] ?? "斗破苍穹").components(separatedBy: ",")[0]
+        let sources = try FileManager.default.contentsOfDirectory(atPath: dir).filter { $0.hasSuffix(".json") }.sorted()
+            .compactMap { FileManager.default.contents(atPath: dir + "/" + $0) }.flatMap { (try? LegadoSourceStore.parse($0)) ?? [] }.filter(\.supported)
+        let results = await withTaskGroup(of: String.self) { tg in
+            for s in sources {
+                tg.addTask {
+                    do { return "\(s.bookSourceName): \(try await LegadoClient.run { try LegadoClient.search(s, key: key) }.count) 条" }
+                    catch { return "\(s.bookSourceName): ✗ \((error as? LocalizedError)?.errorDescription ?? "\(error)")" }
+                }
+            }
+            var out: [String] = []
+            for await r in tg { out.append(r) }
+            return out
+        }
+        print("[legado-concurrent]\n" + results.sorted().joined(separator: "\n"))
+    }
 }

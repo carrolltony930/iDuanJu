@@ -237,4 +237,26 @@ final class NovelUITests: XCTestCase {
         shot("legado_06_login")
         shot("legado_06_login")
     }
+
+    /// Live: imports a real source collection (aggregates + audio / comic / video sources) and searches in the app.
+    /// TEST_RUNNER_STV_LEGADO_IMPORT=/abs/all.json; the app must not crash and must finish every source.
+    func testSearchWithImportedCollection() {
+        guard let file = ProcessInfo.processInfo.environment["STV_LEGADO_IMPORT"] else { return }
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchEnvironment["STV_HOME_TAB"] = "novel"
+        app.launchEnvironment["STV_LEGADO_IMPORT"] = file
+        app.launch()
+        el("novel.search").tap()
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("斗破苍穹\n")
+        let done = NSPredicate(format: "label BEGINSWITH '共 '")
+        let header = app.staticTexts.matching(done).firstMatch
+        XCTAssertTrue(header.waitForExistence(timeout: 90), "search did not finish")
+        XCTAssertEqual(app.state, .runningForeground, "app crashed")
+        print("[ui-search] \(header.label)")
+        shot("legado_07_collection_search")
+    }
 }

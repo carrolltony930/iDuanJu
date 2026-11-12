@@ -207,6 +207,7 @@ enum LegadoClient {
     /// Runs `loginJS + call` (a button action or `login()`), like Legado's login page.
     static func runLogin(_ s: LegadoSource, _ call: String) throws -> String {
         let ctx = LegadoContext(source: s)
+        ctx.interactive = true
         let code = (loginJS(s) ?? "") + "\n" + call
         return LegadoAnalyzer.textOf(try ctx.evalJS(code, result: nil, baseURL: s.bookSourceUrl))
     }
@@ -219,11 +220,16 @@ enum LegadoClient {
 
     // MARK: async
 
+    /// Runs a book-source operation on its own thread with an 8 MB stack: GCD workers have 512 KB, less than the
+    /// JS engine's own stack limit, so deep recursion in a big jsLib would overflow the real stack and crash.
     static func run<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { cont in
-            DispatchQueue.global(qos: .userInitiated).async {
+            let t = Thread {
                 do { cont.resume(returning: try work()) } catch { cont.resume(throwing: error) }
             }
+            t.stackSize = 8 << 20
+            t.qualityOfService = .userInitiated
+            t.start()
         }
     }
 }

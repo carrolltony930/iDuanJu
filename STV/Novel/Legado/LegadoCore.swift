@@ -135,6 +135,18 @@ enum LegadoError: LocalizedError {
 
 enum LegadoHTTP {
     static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    /// Shared session; DEBUG `STV_NO_PROXY=1` bypasses the Mac's system proxy in the simulator (closer to a phone).
+    static let session: URLSession = {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["STV_NO_PROXY"] == "1" {
+            let c = URLSessionConfiguration.default
+            c.connectionProxyDictionary = [:]
+            return URLSession(configuration: c)
+        }
+        #endif
+        return URLSession.shared
+    }()
+
     /// Tests replace the network (URL → response).
     nonisolated(unsafe) static var transport: ((URLRequest) throws -> (Data, HTTPURLResponse))?
 
@@ -158,7 +170,7 @@ enum LegadoHTTP {
         } else {
             let sem = DispatchSemaphore(value: 0)
             nonisolated(unsafe) var out: (Data?, URLResponse?, Error?)
-            URLSession.shared.dataTask(with: req) { d, r, e in out = (d, r, e); sem.signal() }.resume()
+            session.dataTask(with: req) { d, r, e in out = (d, r, e); sem.signal() }.resume()
             sem.wait()
             if let e = out.2 { throw LegadoError.network("网络错误：\(e.localizedDescription)") }
             guard let r = out.1 as? HTTPURLResponse else { throw LegadoError.network("没有响应") }
@@ -281,22 +293,25 @@ final class LegadoJS {
             function IvParameterSpec(v) { return { iv: bytesOf(v) }; }
             // Rhino scope helpers: `this.getHeaderMap()` (the request headers) and login state (not supported → empty).
             globalThis.getHeaderMap = () => call('headers', null);
-            globalThis.getSource = () => globalThis.source;
+globalThis.getSource = () => globalThis.source;
+  // Rhino's JavaImporter + `with (...)`: Java packages are not available here; an empty scope keeps scripts running.
+  globalThis.JavaImporter = function () { return new Object(); };
               
   // ---- login, browser and cache (Legado `source` / `cache` objects) ----
   const parseObj = (t) => { try { return JSON.parse(t) || new Object(); } catch (e) { return new Object(); } };
   globalThis.__wrapSource = (src) => {
-    src.getKey = () => src.bookSourceUrl;
+src.getKey = () => src.bookSourceUrl;
+    src.key = src.bookSourceUrl;
     src.getVariable = () => java.get('__sourceVariable');
     src.setVariable = (v) => java.put('__sourceVariable', str(v));
     src.get = (k) => java.get(k);
     src.put = (k, v) => java.put(k, v);
     src.getLoginInfo = () => call('loginInfo', null);
-    src.getLoginInfoMap = () => parseObj(call('loginInfo', null));
+src.getLoginInfoMap = () => __jmap(parseObj(call('loginInfo', null)));
     src.putLoginInfo = (v) => { call('putLoginInfo', { v: str(v) }); return true; };
     src.removeLoginInfo = () => call('putLoginInfo', { v: '' });
     src.getLoginHeader = () => call('loginHeader', null);
-    src.getLoginHeaderMap = () => parseObj(call('loginHeader', null));
+src.getLoginHeaderMap = () => __jmap(parseObj(call('loginHeader', null)));
     src.putLoginHeader = (v) => call('putLoginHeader', { v: str(v) });
     src.removeLoginHeader = () => call('putLoginHeader', { v: '' });
     src.getLoginJs = () => '';
@@ -372,6 +387,42 @@ final class LegadoJS {
   for (const k of Object.keys(listMethods)) {
     if (!(k in Array.prototype)) Object.defineProperty(Array.prototype, k, { value: listMethods[k], enumerable: false, writable: true, configurable: true });
   }
+
+  // ---- more Legado / Java bits seen in real sources ----
+  Object.assign(globalThis.java, {
+    t2s: (s) => call('convert', { s: str(s), to: 'Hant-Hans' }),
+    s2t: (s) => call('convert', { s: str(s), to: 'Hans-Hant' }),
+    randomUUID: () => { const u = call('uuid', null); return { toString: () => u, valueOf: () => u }; },
+    timeFormatUTC: (t, fmt, off) => java.timeFormat(t),
+    // RSA (hutool AsymmetricCrypto): public-key "decrypt" = verify-style recovery, used to unpack chapter text.
+    createAsymmetricCrypto: (alg) => {
+      let pub = null, priv = null;
+      const toBytes = (d) => Array.isArray(d) ? d : call('b64.dec', { s: str(d) });
+      const o = {
+        setPublicKey: (k) => { pub = toBytes(k); return o; },
+        setPrivateKey: (k) => { priv = toBytes(k); return o; },
+ decrypt: (d) => call('rsa.dec', { key: pub, priv, b: toBytes(d) }),
+ decryptStr: (d) => call('bytes.dec', { b: call('rsa.dec', { key: pub, priv, b: toBytes(d) }), cs: 'UTF-8' }),
+ encrypt: (d) => call('rsa.enc', { key: pub, b: Array.isArray(d) ? d : call('bytes.enc', { s: str(d), cs: 'UTF-8' }) }),
+        encryptBase64: (d) => call('b64.enc', { b: o.encrypt(d) }),
+      };
+      return o;
+    },
+    getTxtInFolder: () => '', importScript: () => '', cacheFile: () => '',
+  });
+  globalThis.cookie.removeCookie = (u) => call('cookieRemove', { url: str(u) });
+  globalThis.cookie.setCookie = (u, c) => call('cookieSet', { url: str(u), c: str(c) });
+  // Java Map methods on the maps sources get from us (login header / info): map.get("k"), containsKey …
+  globalThis.__jmap = (o) => {
+    const m = o || new Object();
+    const def = (k, f) => Object.defineProperty(m, k, { value: f, enumerable: false, writable: true, configurable: true });
+    def('get', (k) => (m[k] === undefined ? null : m[k]));
+    def('put', (k, v) => { m[k] = v; return v; });
+    def('containsKey', (k) => Object.prototype.hasOwnProperty.call(m, k));
+    def('keySet', () => Object.keys(m));
+    def('isEmpty', () => Object.keys(m).length === 0);
+    return m;
+  };
   globalThis.Packages = {
                     java: { lang: { String: JString, Thread: { sleep: () => {} } }, util: { Arrays, Base64, zip: { Inflater } }, security: { MessageDigest } },
                     javax: { crypto: { Cipher, spec: { SecretKeySpec, IvParameterSpec } } },
@@ -411,7 +462,7 @@ final class LegadoJS {
 """#
 
     func eval(_ code: String, _ bindings: [String: Any]) throws -> Any? {
-        let box = idj_new(32 << 20, 1 << 20, legadoHostCallback, Unmanaged.passUnretained(self).toOpaque())
+        let box = idj_new_with_eval(32 << 20, 1 << 20, legadoHostCallback, Unmanaged.passUnretained(self).toOpaque())
         guard let box else { throw LegadoError.rule("JS 引擎初始化失败") }
         defer { idj_free(box) }
         var err: UnsafeMutablePointer<CChar>?
@@ -437,7 +488,15 @@ final class LegadoJS {
             idj_str_free(r)
             header = ""
         }
-        let src = header + Self.relaxed(code)
+        // The snippet runs inside a block: its top-level let / const stay local (no clash with the injected globals,
+        // jsLib or earlier snippets) and the block's completion value is still the result.
+        var src = header + "{\n" + code + "\n}"
+        #if DEBUG
+        // STV_LEGADO_JSSTACK=1: error messages carry the JS stack (to find which call failed in a big jsLib).
+        if ProcessInfo.processInfo.environment["STV_LEGADO_JSSTACK"] == "1" {
+            src = header + "try {\n" + code + "\n} catch (e) { throw new Error(String(e && e.message || e) + ' | ' + String(e && e.stack || '').replace(/\\n/g, ' / ')); }"
+        }
+        #endif
         guard let r = idj_eval_sloppy(box, src, 8, &err) else {
             defer { if let err { idj_str_free(err) } }
             let msg = err.map { String(cString: $0) } ?? "unknown"
@@ -468,7 +527,11 @@ private let legadoHostCallback: idj_host_fn = { opaque, name, args, isErr in
     do {
         let r = try js.handler(String(cString: name), a)
         guard let r, !(r is NSNull) else { return strdup("null") }
-        if let d = try? JSONSerialization.data(withJSONObject: r, options: [.fragmentsAllowed]) { return strdup(String(decoding: d, as: UTF8.self)) }
+        // isValidJSONObject first: NaN / non-JSON values make JSONSerialization raise an Objective-C exception.
+        let wrapped: Any = [r]
+        if JSONSerialization.isValidJSONObject(wrapped), let d = try? JSONSerialization.data(withJSONObject: r, options: [.fragmentsAllowed]) {
+            return strdup(String(decoding: d, as: UTF8.self))
+        }
         return strdup("null")
     } catch {
         isErr?.pointee = 1

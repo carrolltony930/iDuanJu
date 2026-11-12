@@ -127,6 +127,12 @@ struct NovelHomeView: View {
     /// `STV_LEGADO_FIXTURE=/abs/dir` serves a fake book site from `routes.json` and imports its `sources.json`.
     private func seedFixtureIfNeeded() {
         #if DEBUG
+        // `STV_LEGADO_IMPORT=/abs/sources.json`: import a (real) source collection, like the user does.
+        if let f = ProcessInfo.processInfo.environment["STV_LEGADO_IMPORT"], let d = FileManager.default.contents(atPath: f),
+        let list = try? LegadoSourceStore.parse(d) {
+            LegadoSourceStore.shared.remove(Set(LegadoSourceStore.shared.sources.map(\.id)))
+            LegadoSourceStore.shared.add(list)
+        }
         if let dir = ProcessInfo.processInfo.environment["STV_LEGADO_FIXTURE"], !dir.isEmpty,
         let rd = FileManager.default.contents(atPath: dir + "/routes.json"),
         let routes = (try? JSONSerialization.jsonObject(with: rd)) as? [String: String] {
@@ -138,8 +144,11 @@ struct NovelHomeView: View {
                 Thread.sleep(forTimeInterval: 0.2)
                 return (d, HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "text/html; charset=utf-8"])!)
             }
-if let sd = FileManager.default.contents(atPath: dir + "/sources.json"),
-            let list = try? LegadoSourceStore.parse(sd) { LegadoSourceStore.shared.add(list) }
+            if let sd = FileManager.default.contents(atPath: dir + "/sources.json"), let list = try? LegadoSourceStore.parse(sd) {
+                // Only the fixture sources (a previous run may have imported a big collection).
+                LegadoSourceStore.shared.remove(Set(LegadoSourceStore.shared.sources.map(\.id)))
+                LegadoSourceStore.shared.add(list)
+            }
         }
         guard store.books.isEmpty, let p = ProcessInfo.processInfo.environment["STV_NOVEL_SEED"], !p.isEmpty,
         let data = FileManager.default.contents(atPath: p),

@@ -136,6 +136,12 @@ final class LegadoTests: XCTestCase {
                                 XCTAssertEqual(try a.strings("tag.li!0@text"), ["2", "3", "4 x"])
                                 XCTAssertEqual(try a.strings("tag.li[1:2]@text"), ["2", "3"])
                                 XCTAssertEqual(try a.strings("tag.li[0,2]@text"), ["1", "3"])
+                                // Rules written for longer lists must not crash on short ones.
+                                XCTAssertEqual(try a.strings("tag.li[5:9]@text"), [])
+                                XCTAssertEqual(try a.strings("tag.li[2:9]@text"), ["3", "4 x"])
+                                XCTAssertEqual(try a.strings("tag.li[9:2]@text"), ["4 x", "3"])
+                                XCTAssertEqual(try a.strings("tag.p[0:3]@text"), [])
+                                XCTAssertEqual(try a.strings("tag.li.7@text"), [])
                                 XCTAssertEqual(try a.strings("class.c a@text"), ["1"], "multiple classes")
                                 XCTAssertEqual(try a.strings("li.c:eq(1)@text"), ["2"], "css segment with :eq (sibling index)")
                                 XCTAssertEqual(try a.strings("@css:ul li:has(b)@text"), ["4 x"], ":has")
@@ -192,6 +198,20 @@ final class LegadoTests: XCTestCase {
                                     XCTAssertEqual(try a.string("@js:let y = 4; java.base64Decode(java.base64Encode('雾港' + y))"), "雾港4")
                                     XCTAssertEqual(try a.string("@js:java.getString('tag.p@text') + '!'"), "hi!")
                                     XCTAssertEqual(try a.string("<js>result.length > 0 ? 'ok' : 'no'</js>"), "ok")
+                                    // Snippets may redeclare the injected names with let / const (光遇聚合 does `let key`).
+                                    XCTAssertEqual(try a.string("@js:let key = 'k'; const result2 = key + '!'; result2"), "k!")
+                                    XCTAssertEqual(try a.string("@js:var imp = new JavaImporter(); with (imp) { 'ok' }"), "ok")
+                                    XCTAssertEqual(try a.string("@js:eval('1 + 2') + new Function('return 4')()"), "7", "eval allowed for book sources")
+                                    XCTAssertEqual(try a.string("@js:java.t2s('簡體轉換與龍')"), "简体转换与龙")
+                                    XCTAssertEqual(try a.string("@js:java.s2t('简体')"), "簡體")
+                                    XCTAssertEqual(try a.string("@js:java.randomUUID().toString().length"), "36")
+                                    XCTAssertEqual(try a.string("@js:source.key"), "https://book.test")
+                                    XCTAssertEqual(try a.string("@js:var m = source.getLoginHeaderMap(); String(m.get('x')) + ',' + m.containsKey('x')"), "null,false")
+                                    // Object.defineProperty keeps working (no accessor keys leak onto Object.prototype).
+                                    XCTAssertEqual(try a.string("@js:var o = new Object(); Object.defineProperty(o, 'v', { value: 3 }); o.v"), "3")
+                                    // NaN / huge numbers as bytes, empty inflate: no crash.
+                                    XCTAssertEqual(LegadoBytes.data([Double.nan, 1e300, 65]), Data([0, 0, 65]))
+                                    XCTAssertEqual(try LegadoBytes.inflate(Data(), raw: true), Data())
                                     // 长佩-style chapter name: template, then <js> with {{rule}} filled from the item, then ## cleanup.
                                     let item = LegadoAnalyzer(["order": 3, "name": "第3章 雨夜", "type": "item"] as [String: Any], baseURL: "", ctx: LegadoContext(source: htmlSource))
                                     XCTAssertEqual(try item.string("第{{$.order}}章 {{$.name}}\n<js>\nvol = \"{{$.type}}\"==\"volume\"?\" 📖 \":\"\"\nvol+result+vol\n</js>\n##第\\d+章\\s*(?=第\\d+章)"), "第3章 雨夜")
@@ -209,6 +229,16 @@ final class LegadoTests: XCTestCase {
                                     XCTAssertEqual(r.request.value(forHTTPHeaderField: "X-A"), "1")
                                     XCTAssertEqual(String(decoding: r.request.httpBody ?? Data(), as: UTF8.self), #"{"k":"a b"}"#, "JSON bodies keep the raw keyword")
                                     XCTAssertEqual(try LegadoURL.request("@js:'https://j.test/' + page", ctx: ctx, base: "").request.url?.absoluteString, "https://j.test/2")
+                                    // The whole URL is a {{JS}} expression containing `,{` and `}}`-like text, followed by options (久久小说).
+                                    let jj = try LegadoURL.request("{{(function(){var o={a:1};if(o.a){return 'http://j.test/s'}return ''})()}},{\"method\":\"POST\",\"body\":\"k={{key}}\"}", ctx: ctx, base: "")
+                                    XCTAssertEqual(jj.request.url?.absoluteString, "http://j.test/s")
+                                    XCTAssertEqual(jj.request.httpMethod, "POST")
+                                    XCTAssertEqual(String(decoding: jj.request.httpBody ?? Data(), as: UTF8.self), "k=a%20b")
+                                    // Non-strict options (single quotes, line breaks) like PO18.
+                                    let po = try LegadoURL.request("https://p.test/s.php,{\n'charset':'utf-8',\n'method':'POST',\n'body':'searchkey={{key}}'\n}", ctx: ctx, base: "")
+                                    XCTAssertEqual(po.request.url?.absoluteString, "https://p.test/s.php")
+                                    XCTAssertEqual(po.request.httpMethod, "POST")
+                                    XCTAssertEqual(String(decoding: po.request.httpBody ?? Data(), as: UTF8.self), "searchkey=a%20b")
                                 }
 
                                 func testImportParsesLegadoExport() throws {
@@ -307,5 +337,15 @@ function hello() { return 'hi' }
                                                     XCTAssertEqual(try a.string("@js:java.getElement('id.n@tag.a.-1').text()"), "二")
                                                     XCTAssertEqual(try a.string("@js:java.getElement('@css:a.x').first().absUrl('href')"), "https://x.test/b/1")
                                                     XCTAssertEqual(try a.string("tag.a@href<js>result.toArray().map(function (x) { return x.split('/').pop() }).join('+')</js>"), "1+2")
+                                                }
+
+                                                /// hutool AsymmetricCrypto("RSA").setPublicKey(x509).decryptStr(data): text "encrypted" with the private key,
+                                                /// 3 blocks of a 1024-bit key (乐读's chapter text). Fixture made with openssl (sign, PKCS#1 v1.5).
+                                                func testRSAPublicKeyDecrypt() throws {
+                                                    let pub = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDoGQyCVF2rCBkJfGfvDXnKrYJcYOn2v75xyKBhHdXM4gEvYIyv8DYhW/jGHpMyaFVdLKeEaSIAoy7UWuGfYk4gt/2fKfcsYu+V/ZKL8ZOeUC9wJNZZQTijILzH3Fi7gYqFZQ3QiDoTjlWl52OhueKjxH2uiBMIuo3QyOgDFPMnNQIDAQAB"
+                                                    let ct = "Z8FX7L57KL173hhYS5GzbJ7VwFwHV6S/HYlEhYdytTbaz1oTUAKulKLG+RAEjCF+6Ste1APN2MOIt1Xi4vs6QQj0YM12GOyZy83FYjvgrlO/9dfH2D1RlqV2zfbsWrdFHqwKMXl3ksYNSvdyb0As9iavX9u0zdwL1ReXudAW7ZhGS+ICcMNIE4LDwxkHv98Hz1kJIwt+3QvYsG+ipgEU8tnPpwoQCHop5wZVhlIA7HMsbGHqMe0ihz3srB8VTeUe5Konjxamwr/LBV7ttBxfT8KqQc9pCmbV0bU8yr4CBiRns/7mR/7IKzyFvejS5Ivmrg+v6mylTxJhbp/YJG11NlaYx+M3NvHrf5N5KAeFqxuxGHVoYyhmuuHJ0HDctGFtaWktiqCUNH/FYK+PPQdj6YK8QRrMTI++Dtiyh3OHhi/V5rBLPhJBObPfV8fzZOLaia420gW3YCSCVCbuxgTPWQVgoBU6Gh1puYduGmiceJrouBWWwdOYiE0kQDe4uwgt"
+                                                    let a = an("<p/>")
+                                                    let out = try a.string("@js:java.createAsymmetricCrypto('RSA').setPublicKey(java.base64DecodeToByteArray('\(pub)')).decryptStr(java.base64DecodeToByteArray('\(ct)'))")
+                                                    XCTAssertEqual(out, String(repeating: "雾港的灯塔在岛的最北边，白色的墙皮已经剥落了大半。守塔人每天傍晚爬上一百二十级台阶去点灯。", count: 2))
                                                 }
                                             }

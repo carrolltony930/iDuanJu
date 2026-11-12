@@ -113,7 +113,7 @@ static JSValue js_host(JSContext *ctx, JSValueConst this_val, int argc, JSValueC
     return v;
 }
 
-IDJBox *idj_new(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque) {
+static IDJBox *new_box(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque, int with_eval) {
     IDJBox *b = calloc(1, sizeof(IDJBox));
     if (!b) return NULL;
     b->fn = fn;
@@ -135,12 +135,23 @@ IDJBox *idj_new(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaq
     JS_AddIntrinsicTypedArrays(ctx);
     JS_AddIntrinsicPromise(ctx);
     JS_AddIntrinsicBigInt(ctx);
+    if (with_eval) JS_AddIntrinsicEval(ctx);
     JS_SetContextOpaque(ctx, b);
     b->ctx = ctx;
     JSValue global = JS_GetGlobalObject(ctx);
     JS_DefinePropertyValueStr(ctx, global, "__host", JS_NewCFunction(ctx, js_host, "__host", 2), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
     JS_FreeValue(ctx, global);
     return b;
+}
+
+IDJBox *idj_new(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque) {
+    return new_box(mem_limit, stack_limit, fn, opaque, 0);
+}
+
+/// Same sandbox with eval / new Function enabled: 「阅读」 book-source scripts (code the user imported) use them.
+/// Plugins keep using idj_new.
+IDJBox *idj_new_with_eval(size_t mem_limit, size_t stack_limit, idj_host_fn fn, void *opaque) {
+    return new_box(mem_limit, stack_limit, fn, opaque, 1);
 }
 
 /// Compiles `src` in a throw-away context that has the parser, returns bytecode (js_free_rt it).
