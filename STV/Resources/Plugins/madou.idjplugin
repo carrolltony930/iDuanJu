@@ -1,0 +1,48 @@
+{
+ "manifest": {
+  "schema": 1,
+  "id": "com.idj.madou",
+  "name": "麻豆社",
+  "version": "1.0.0",
+  "author": {
+   "name": "carrolltony930"
+  },
+  "description": "madou.club（麻豆社）：麻豆传媒/果冻传媒/蜜桃影像等国产剧情片，全站中文。详情页 iframe 指向 dash 播放器，播放时现取 100 秒有效的 token，HLS(AES-128)。",
+  "type": "video",
+  "adult": true,
+  "language": [
+   "zh"
+  ],
+  "minAppVersion": "1.5",
+  "entry": "main.js",
+  "permissions": {
+   "http": [
+    "madou.club",
+    "*.madou.club"
+   ],
+   "media": [
+    "madou.club",
+    "*.madou.club"
+   ],
+   "cloudflare": false,
+   "storage": true,
+   "login": false
+  },
+  "capabilities": [
+   "home",
+   "category",
+   "search",
+   "detail",
+   "play"
+  ],
+  "settings": [],
+  "integrity": {
+   "files": {
+    "main.js": "sha256-9s7i3BvIWb+DAwYogb7+c71EnD/pcZ3s5VGzsgk947U="
+   }
+  }
+ },
+ "files": {
+  "main.js": "// madou.club（麻豆社）· i短剧 idj1 插件\n//\n// WordPress 站点：\n//   列表  /                    （/page/{n}/ 翻页）\n//   分类  /category/{slug}/    （/category/{slug}/page/{n}/ 翻页）\n//   搜索  /?s=关键词           （/page/{n}/?s=关键词 翻页）\n//   详情  /{slug}.html\n//\n// 详情页里只有一个 iframe：https://dash.madou.club/share/{id}\n// 那个 share 页里写着：\n//     var token = \"<JWT>\";                       // exp - iat = 100 秒\n//     var m3u8  = '/videos/{id}/index.m3u8';\n//     m3u8 = m3u8 + '?token=' + token;\n// token 只有 100 秒，所以必须在播放时现取（不能缓存太久）。\n// 分片和 AES-128 密钥都**不需要** token（实测不带 token 也是 200），只有播放列表需要。\n\nconst SITE = 'https://madou.club';\nconst DASH = 'https://dash.madou.club';\nconst UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';\n\nconst HEADERS = {\n  'User-Agent': UA,\n  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',\n  'Accept-Language': 'zh-CN,zh;q=0.9',\n  'Referer': SITE + '/'\n};\n\n// 分类 slug 是中文的 URL 编码，直接用导航里的原样值\nconst CATEGORIES = [\n  { id: 'latest', name: '最新' },\n  { id: 'likes', name: '最多赞' },\n  { id: 'c-%e9%ba%bb%e8%b1%86%e4%bc%a0%e5%aa%92', name: '麻豆传媒' },\n  { id: 'c-%e9%ba%bb%e8%b1%86%e7%95%aa%e5%a4%96%e7%af%87', name: '麻豆番外篇' },\n  { id: 'c-%e9%ba%bb%e8%b1%86%e8%8a%b1%e7%b5%ae', name: '麻豆花絮' },\n  { id: 'c-%e6%9e%9c%e5%86%bb%e4%bc%a0%e5%aa%92', name: '果冻传媒' },\n  { id: 'c-%e8%9c%9c%e6%a1%83%e5%bd%b1%e5%83%8f', name: '蜜桃影像' },\n  { id: 'c-hongkongdoll', name: 'HongKongDoll' },\n  { id: 'c-psychoporntw', name: 'PsychoPornTW' }\n];\n\nfunction clean(s) {\n  return String(s == null ? '' : s)\n    .replace(/<[^>]*>/g, '')\n    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/&nbsp;/g, ' ')\n    .replace(/&#x([0-9a-f]+);/gi, function (_m, h) { return String.fromCharCode(parseInt(h, 16)); })\n    .replace(/&#(\\d+);/g, function (_m, d) { return String.fromCharCode(parseInt(d, 10)); })\n    .trim();\n}\n\nasync function req(path) {\n  const url = path.indexOf('http') === 0 ? path : SITE + path;\n  const res = await host.http.request({ url: url, headers: HEADERS, timeout: 25000 });\n  if (res.status === 429) throw host.error('E_RATE_LIMIT', '站点限流了，等 1~2 分钟再试');\n  if (res.status === 404) throw host.error('E_NOT_FOUND', '页面不存在');\n  if (res.status < 200 || res.status >= 300) throw host.error('E_HTTP', 'HTTP ' + res.status + ' ' + path);\n  return typeof res.body === 'string' ? res.body : '';\n}\n\n// 卡片：<article class=\"excerpt …\">\n//   <a class=\"thumbnail\" href=\"https://madou.club/{slug}.html\">\n//     <img data-src=\"https://madou.club/covers/…-240x180.jpg\" class=\"thumb\"></a>\n//   <h2><a href=\"…{slug}.html\">标题</a></h2>\nfunction parseCards(html) {\n  const out = [], seen = {};\n  const re = /href=\"https:\\/\\/madou\\.club\\/([^\"\\/]+\\.html)\"/g;\n  let m;\n  while ((m = re.exec(html)) !== null) {\n    const id = m[1];\n    if (seen[id]) continue;\n    seen[id] = 1;\n    const chunk = html.substring(m.index, m.index + 1600);\n    const cov = chunk.match(/data-src=\"(https?:\\/\\/[^\"]+\\.(?:jpg|jpeg|png|webp))\"/i)\n      || chunk.match(/<img[^>]+src=\"(https?:\\/\\/[^\"]+\\.(?:jpg|jpeg|png|webp))\"/i);\n    const t2 = chunk.match(/<h2[^>]*>\\s*<a[^>]*>([\\s\\S]*?)<\\/a>/);\n    const hot = chunk.match(/<time[^>]*class=\"[^\"]*hot[^\"]*\"[^>]*>([^<]*)</);\n    out.push({\n      id: id,\n      title: t2 ? clean(t2[1]) : decodeURIComponent(id.replace(/\\.html$/, '')),\n      cover: cov ? cov[1] : '',\n      remarks: hot ? clean(hot[1]) : ''\n    });\n  }\n  return out;\n}\n\nfunction pageResult(items, page) {\n  return { items: items, page: page, hasMore: items.length >= 14 };\n}\n\nfunction listPath(kind, page) {\n  if (kind === 'likes') return '/likes';\n  if (kind.indexOf('c-') === 0) {\n    const slug = kind.slice(2);\n    return '/category/' + slug + '/' + (page > 1 ? 'page/' + page + '/' : '');\n  }\n  return '/' + (page > 1 ? 'page/' + page + '/' : '');\n}\n\nfunction detailPath(id) {\n  const p = String(id == null ? '' : id).replace(/^\\//, '');\n  if (/^[^\\/]+\\.html$/.test(p)) return '/' + p;\n  return '';\n}\n\nexport default {\n  async home() {\n    const html = await req('/');\n    return { categories: CATEGORIES, items: parseCards(html), hasMore: true };\n  },\n\n  async category(input) {\n    const id = String(input.id || 'latest');\n    const page = Math.max(1, Number(input.page || 1));\n    const kind = CATEGORIES.some(function (c) { return c.id === id; }) ? id : 'latest';\n    const html = await req(listPath(kind, page));\n    return pageResult(parseCards(html), page);\n  },\n\n  async search(input) {\n    const kw = clean(input.keyword || '');\n    const page = Math.max(1, Number(input.page || 1));\n    if (!kw) return { items: [], page: 1, hasMore: false };\n    const path = (page > 1 ? '/page/' + page + '/' : '/') + '?s=' + encodeURIComponent(kw);\n    const html = await req(path);\n    return pageResult(parseCards(html), page);\n  },\n\n  async detail(input) {\n    const path = detailPath(input.id);\n    if (!path) throw host.error('E_NOT_FOUND', '缺少视频 id');\n    const html = await req(path);\n\n    const h1 = html.match(/<h1[^>]*>([\\s\\S]*?)<\\/h1>/);\n    let title = h1 ? clean(h1[1]) : '';\n    if (!title) title = decodeURIComponent(String(input.id).replace(/\\.html$/, ''));\n    const og = html.match(/property=\"og:image\"[^>]*content=\"([^\"]+)\"/) || html.match(/content=\"([^\"]+)\"[^>]*property=\"og:image\"/);\n    const emb = html.match(/<iframe[^>]+src=[\"']?([^\"'\\s>]+)/);\n\n    // 详情页本身没有特色图（og:image 为空），封面在 share 页 DPlayer 的 pic 里\n    let cover = '';\n    if (emb) {\n      let share = emb[1];\n      if (share.indexOf('//') === 0) share = 'https:' + share;\n      try {\n        const sp = await req(share);\n        const pic = sp.match(/pic:\\s*'([^']+)'/) || sp.match(/pic:\\s*\"([^\"]+)\"/);\n        if (pic) cover = pic[1].indexOf('http') === 0 ? pic[1] : DASH + pic[1];\n      } catch (e) { cover = ''; }\n    }\n\n    return {\n      title: title,\n      cover: cover,\n      desc: emb ? '播放器：dash.madou.club' : '⚠️ 页面上没有播放器',\n      lines: [{ name: '默认', episodes: [{ id: String(input.id), name: title }] }]\n    };\n  },\n\n  async play(input) {\n    const path = detailPath(input.episodeId || input.id);\n    if (!path) throw host.error('E_NOT_FOUND', '缺少视频 id');\n\n    // 1) 详情页里的 iframe → share 页\n    const html = await req(path);\n    const ifr = html.match(/<iframe[^>]+src=[\"']?([^\"'\\s>]+)/);\n    if (!ifr) throw host.error('E_UNSUPPORTED', '详情页里没有播放器');\n    let share = ifr[1];\n    if (share.indexOf('//') === 0) share = 'https:' + share;\n\n    // 2) share 页里现取 token 和 m3u8 路径（token 只有 100 秒有效期）\n    const page = await req(share);\n    const tok = page.match(/var token\\s*=\\s*\"([^\"]*)\"/);\n    const m3 = page.match(/var m3u8\\s*=\\s*'([^']*)'/) || page.match(/var m3u8\\s*=\\s*\"([^\"]*)\"/);\n    if (!m3) throw host.error('E_UNSUPPORTED', '播放器里没有找到 m3u8 地址');\n\n    let url = m3[1].indexOf('http') === 0 ? m3[1] : DASH + m3[1];\n    if (tok && tok[1] && url.indexOf('token=') < 0) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + tok[1];\n\n    host.log('play ' + String(input.episodeId || input.id) + ' → 1 条线路 (hls)');\n    host.log('  ' + url.slice(0, 120));\n    return {\n      streams: [{\n        name: '线路1',\n        url: url,\n        format: 'hls',\n        headers: { 'Referer': SITE + '/', 'User-Agent': UA }\n      }]\n    };\n  }\n};\n"
+ }
+}

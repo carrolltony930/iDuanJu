@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "com.idj.madou",
+  "name": "麻豆社",
+  "version": "1.0.0",
+  "author": { "name": "carrolltony930" },
+  "description": "madou.club（麻豆社）：麻豆传媒/果冻传媒/蜜桃影像等国产剧情片，全站中文。详情页 iframe 指向 dash 播放器，播放时现取 100 秒有效的 token，HLS(AES-128)。",
+  "type": "video",
+  "adult": true,
+  "language": ["zh"],
+  "minAppVersion": "1.5",
+  "entry": "main.js",
+  "permissions": {
+    "http": ["madou.club", "*.madou.club"],
+    "media": ["madou.club", "*.madou.club"],
+    "cloudflare": false,
+    "storage": true,
+    "login": false
+  },
+  "capabilities": ["home", "category", "search", "detail", "play"],
+  "settings": []
+}
