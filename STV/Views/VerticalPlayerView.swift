@@ -3,6 +3,17 @@ import AVFoundation
 import AVKit
 import UIKit
 
+/// 长按倍速的震动反馈器：独立于 View 类型，避免 SwiftUI 视图体内引用自身静态成员
+/// 造成类型检查递归超时；单例 prepare 后长按触发零延迟。
+private enum SpeedHaptics {
+    static let feedback = UIImpactFeedbackGenerator(style: .medium)
+    static func prepare() { feedback.prepare() }
+    static func fire() {
+        feedback.impactOccurred()
+        feedback.prepare()
+    }
+}
+
 /// Route entry. Hosts one `PlayerScreen` per series so switching season (多季) rebuilds the coordinator cleanly.
 struct VerticalPlayerView: View {
     let series: HGSeries
@@ -244,7 +255,7 @@ struct PlayerScreen: View {
         .alert("画中画暂不可用", isPresented: Binding(get: { co.pipError != nil }, set: { if !$0 { co.pipError = nil } })) {
             Button("好") { co.pipError = nil }
         } message: { Text(co.pipError ?? "") }
-        .onAppear { OrientationGate.unlock(); VerticalPlayerView.speedFeedback.prepare() }
+        .onAppear { OrientationGate.unlock(); SpeedHaptics.prepare() }
         .onDisappear {
             // iOS 17：视图正在 pop 时同步改 @State/Observable 属性会触发 SwiftUI 崩溃。
             // 延后到下一个 main runloop，等视图树拆完再停播放器、恢复亮度、锁回竖屏。
@@ -800,17 +811,12 @@ struct PlayerScreen: View {
 
     private let edgeBackWidth: CGFloat = 36
 
-    /// 静态单例反馈器：SwiftUI 重建 View 时不会换新对象，prepare 的效果得以保留，
-    /// 长按触发震动零延迟（临时创建首次会慢半拍）。
-    private static let speedFeedback = UIImpactFeedbackGenerator(style: .medium)
-
     private func enterSpeedMode() {
         // 长按固定 2.0x（受内核上限约束），前后/上下滑动都不再改变倍速。
         let quick = min(2.0, co.engine.maxRate)
         previewRate = quick
         speedMode = true
-        VerticalPlayerView.speedFeedback.impactOccurred()
-        VerticalPlayerView.speedFeedback.prepare()
+        SpeedHaptics.fire()
         if co.paused { co.togglePause() }
         co.applyRate(quick)
     }
