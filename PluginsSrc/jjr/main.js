@@ -138,14 +138,16 @@ export default {
     if (cover.indexOf('//') === 0) cover = 'https:' + cover;
 
     const src = html.match(/video_url:\s*'([^']+)'/) || html.match(/video_url:\s*"([^"]+)"/);
+    const altSrc = html.match(/video_alt_url:\s*'([^']+)'/);
     if (src) srcCache[String(input.id)] = { u: src[1], t: Date.now() };
     const tags = html.match(/video_tags:\s*'([^']*)'/);
     if (!title) title = String(input.id).split('/').pop();
+    const noSource = !(src && src[1]) && !(altSrc && /^https?:/.test(altSrc[1]));
 
     return {
       title: title,
       cover: cover,
-      desc: tags ? '标签：' + clean(tags[1]) : '',
+      desc: (tags ? '标签：' + clean(tags[1]) : '') + (noSource ? ' ⚠️ 该视频没有免费片源' : ''),
       coverHeaders: { 'Referer': SITE + '/', 'User-Agent': UA },
       lines: [{ name: '默认', episodes: [{ id: String(input.id), name: title }] }]
     };
@@ -162,9 +164,15 @@ export default {
     if (!src) {
       const html = await req(path);
       const m = html.match(/video_url:\s*'([^']+)'/) || html.match(/video_url:\s*"([^"]+)"/);
-      if (!m) throw host.error('E_UNSUPPORTED', '页面里没有找到播放地址');
-      src = m[1];
-      srcCache[id] = { u: src, t: Date.now() };
+      if (m) {
+        src = m[1];
+        srcCache[id] = { u: src, t: Date.now() };
+      } else {
+        // 有些条目没有 video_url（付费/下架），flashvars 里可能还有 video_alt_url
+        const alt = html.match(/video_alt_url:\s*'([^']+)'/);
+        if (alt && /^https?:/.test(alt[1])) src = alt[1];
+      }
+      if (!src) throw host.error('E_UNSUPPORTED', '这个视频没有免费片源（页面里没有 video_url，可能需要会员）');
     }
     if (src.indexOf('//') === 0) src = 'https:' + src;
 
