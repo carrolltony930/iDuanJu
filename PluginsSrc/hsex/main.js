@@ -187,10 +187,22 @@ export default {
     if (!m) throw host.error('E_PARSE', '播放地址无法解析');
     const path = m[2] || '/', query = m[3] || '';
 
-    // 不做任何探测：插件这边一个请求都不多发，直接把实测最稳的 Shark 线路交出去。
-    // （之前加探测是为了挑线路，但探测和播放打的是同一个 token，可能是 -1011 的来源，
-    //   先去掉做 A/B 对照。）
-    const node = CDN_HOSTS[1];                      // Shark
+    // 先确认播放列表真的能取到：hsex 上不少视频在源站就是 500（4 条线路全废）。
+    // 直接交出去只会变成播放器的 -1011，不如在这里换成一句人话。
+    const hdr = { 'Referer': SITE + '/', 'User-Agent': UA };
+    let node = CDN_HOSTS[1];                        // Shark
+    let status = 0;
+    for (const cand of [CDN_HOSTS[1], CDN_HOSTS[0]]) {
+      const u = 'https://' + cand.host + path + query;
+      try {
+        const r = await host.http.request({ url: u, headers: hdr, timeout: 2500 });
+        status = r.status;
+        if (r.status >= 200 && r.status < 400) { node = cand; break; }
+      } catch (e) { status = 0; }
+    }
+    if (status && (status < 200 || status >= 400)) {
+      throw host.error('E_UNSUPPORTED', '这个视频的源已失效（CDN 返回 ' + status + '），换一个视频试试');
+    }
     const streams = [{
       name: node.name,
       url: 'https://' + node.host + path + query,
