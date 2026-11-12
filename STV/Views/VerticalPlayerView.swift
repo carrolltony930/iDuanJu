@@ -216,13 +216,13 @@ struct PlayerScreen: View {
                     }
                     // Native iOS volume HUD is used instead (see PlayerAdjust.swift).
                     if speedMode {
-                        VStack(alignment: .leading, spacing: 0) {
+                        // 常规播放器式：顶部居中、贴状态栏下沿一行小胶囊，不压画面主体、不与角落按钮抢位。
+                        VStack(spacing: 0) {
                             PlayerSpeedHUD(rate: previewRate)
-                                .padding(.leading, 14)
-                                .padding(.top, landscape ? 12 : ins.top + 46)
+                                .padding(.top, landscape ? 10 : ins.top + 8)
                             Spacer(minLength: 0)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .transition(.opacity)
                         .allowsHitTesting(false)
                     }
