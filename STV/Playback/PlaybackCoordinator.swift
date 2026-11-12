@@ -524,9 +524,16 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         for k in tasks.keys where k != i && k != i + 1 {
             tasks.removeValue(forKey: k)?.cancel()
         }
+        // 释放代理路由/预取缓存可能牵扯网络与锁，放到后台做，避免切线路时卡住主线程。
+        var releasing: [String] = []
         for (k, tok) in prefetchTokens where k != i {
             // Only the playing episode pre-buffers; others drop their proxy route + cache.
-            LocalHLSProxy.shared.release(tok); prefetchTokens[k] = nil; prepared[k] = nil
+            releasing.append(tok); prefetchTokens[k] = nil; prepared[k] = nil
+        }
+        if !releasing.isEmpty {
+            Task.detached(priority: .utility) {
+                for tok in releasing { LocalHLSProxy.shared.release(tok) }
+            }
         }
         prebuffer = nil
         for k in prepared.keys where abs(k - i) > 1 {

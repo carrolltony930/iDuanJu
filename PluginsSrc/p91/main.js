@@ -213,8 +213,9 @@ export default {
     }
     if (!candidates.length) throw host.error('E_UNSUPPORTED', '页面里没有找到播放地址');
 
-    // 站点的地址路径是 //mp43/...（双斜杠）。Safari 会容错，但 AVFoundation 不一定，
-    // 所以同时给一条单斜杠版本作为备用线路，播放器里可以手动切换。
+    // 站点的地址路径是 //mp43/...（双斜杠）。本地播放代理处理这种路径时容易出问题
+    // （实测线路1 一直转圈、线路2 正常），所以把归一化后的单斜杠版本放在**线路1**，
+    // 双斜杠原样作为线路2 备用。
     const streams = [];
     const seen = {};
     function add(name, u) {
@@ -227,14 +228,12 @@ export default {
         headers: { 'Referer': SITE + '/', 'User-Agent': UA }
       });
     }
-    for (let i = 0; i < candidates.length && i < 2; i++) {
-      const u = candidates[i];
-      add('线路' + (streams.length + 1), u);
-      // 只对第一条第路径里的重复斜杠做一次归一化
-      if (i === 0 && /\/\/[^/]/.test(u.replace(/^https:\/\//, ''))) {
-        add('线路' + (streams.length + 1) + ' 单斜杠', u.replace(/^https:\/\/([^/]+)\/\//, 'https://$1/'));
-      }
-    }
+    const first = candidates[0] || '';
+    const single = /\/\/[^/]/.test(first.replace(/^https:\/\//, ''))
+      ? first.replace(/^https:\/\/([^/]+)\/\//, 'https://$1/')
+      : '';
+    if (single && single !== first) add('线路1', single);
+    add(single ? '线路2 原始' : '线路1', first);
     if (!streams.length) throw host.error('E_UNSUPPORTED', '没有可用的 https 播放地址');
     host.log('play ' + id[0] + ' → ' + streams.length + ' 条线路');
     for (const s of streams) host.log('  ' + s.name + ' ' + s.format + ' ' + s.url);
