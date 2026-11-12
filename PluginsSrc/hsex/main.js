@@ -212,7 +212,7 @@ export default {
         name: s.name,
         url: s.url,
         format: 'hls',
-        headers: { 'Referer': SITE + '/' }
+        headers: { 'Referer': SITE + '/', 'User-Agent': UA }
       };
     });
     host.log('play ' + id + ' → ' + streams.length + ' 条可用线路（探测 ' + Math.min(all.length, 3) + ' 条）');

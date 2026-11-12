@@ -224,7 +224,7 @@ export default {
         name: name,
         url: u,
         format: /\.m3u8(\?|$)/.test(u) ? 'hls' : 'mp4',
-        headers: { 'Referer': SITE + '/' }
+        headers: { 'Referer': SITE + '/', 'User-Agent': UA }
       });
     }
     for (let i = 0; i < candidates.length && i < 2; i++) {
