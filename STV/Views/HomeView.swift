@@ -36,6 +36,8 @@ enum HomeSource: Hashable, Identifiable {
     case channels
     /// 漫画 (MangaHomeView).
     case manga
+    /// 小说 (NovelHomeView: local TXT / EPUB bookshelf).
+    case novel
     var id: String { label }
     var label: String {
         switch self {
@@ -45,6 +47,7 @@ enum HomeSource: Hashable, Identifiable {
         case .site(let s): s.label
         case .channels: "频道"
         case .manga: "漫画"
+        case .novel: "小说"
         }
     }
     @MainActor var subs: [HomeTab] {
@@ -53,12 +56,12 @@ enum HomeSource: Hashable, Identifiable {
         case .huangguo: [.huangguo(.video), .huangguo(.legacy)]
         case .ai: SourceGate.shared.showHuangguo ? [.hongguo(.ai), .huangguo(.ai)] : [.hongguo(.ai)]
         case .site(let s): [.site(s)]
-        case .channels, .manga: []
+        case .channels, .manga, .novel: []
         }
     }
     @MainActor static var all: [HomeSource] {
         let g = SourceGate.shared
-        return [.hongguo] + (g.showHuangguo ? [.huangguo] : []) + [.ai] + g.visibleSites.map { .site($0) } + [.channels, .manga]
+        return [.hongguo] + (g.showHuangguo ? [.huangguo] : []) + [.ai] + g.visibleSites.map { .site($0) } + [.channels, .manga, .novel]
     }
 }
 
@@ -103,6 +106,7 @@ struct HomeView: View {
         if e == "ai" { src = .ai }
         if e == "channels" { src = .channels }
         if e == "manga" { src = .manga }
+        if e == "novel" { src = .novel }
         #endif
         _source = State(initialValue: src)
         _subs = State(initialValue: sub)
@@ -117,6 +121,8 @@ struct HomeView: View {
                         ChannelFeedView(embedded: true).tag(s)
                     } else if s == .manga {
                         MangaHomeView(embedded: true).tag(s)
+                    } else if s == .novel {
+                        NovelHomeView(embedded: true).tag(s)
                     } else {
                         HomeFeedPage(source: s,
                                      tab: Binding(get: { subs[s] ?? s.subs[0] }, set: { subs[s] = $0 }),
