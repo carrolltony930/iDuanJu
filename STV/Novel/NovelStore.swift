@@ -100,6 +100,14 @@ final class NovelStore {
         return ns.substring(with: NSRange(location: c.start, length: c.length))
     }
 
+    /// Seconds spent in the reader per book (进度 panel: 阅读时长 / 约 N 小时后读完).
+    private(set) var readTime: [String: Double] = (UserDefaults.standard.dictionary(forKey: "stv.novel.readTime") as? [String: Double]) ?? [:]
+    func addReadTime(_ b: NovelBook, _ seconds: Double) {
+        guard seconds > 1 else { return }
+        readTime[b.id, default: 0] += min(seconds, 3600)
+        d.set(readTime, forKey: "stv.novel.readTime")
+    }
+
     func record(_ b: NovelBook, chapter: Int, offset: Int) {
         progress[b.id] = NovelProgress(chapter: chapter, offset: offset, updatedAt: Date())
         save(progress, "stv.novel.progress")
@@ -115,25 +123,31 @@ final class NovelStore {
     private func save<T: Encodable>(_ v: T, _ key: String) { d.set(try? JSONEncoder().encode(v), forKey: key) }
 }
 
-/// Reader appearance (WeRead-style): font size, line spacing, paper colour, page turning, typeface.
+/// Reader appearance, after WeRead: size, margins, line spacing, paper colour, typeface, indent, page turning.
 @MainActor @Observable
 final class NovelPrefs {
     static let shared = NovelPrefs()
-    enum Theme: Int, CaseIterable { case white, paper, green, night }
+    enum Theme: Int, CaseIterable { case white, cream, green, night }
     enum Turn: Int, CaseIterable { case slide, scroll }
 
     var fontSize: Double { didSet { d.set(fontSize, forKey: "stv.novel.font") } }
-    var spacing: Int { didSet { d.set(spacing, forKey: "stv.novel.spacing") } }
+    /// 0 = 紧 … 1 = 松
+    var lineSpacing: Double { didSet { d.set(lineSpacing, forKey: "stv.novel.lineSpacing") } }
+    /// 0 = 小 … 1 = 大
+    var margin: Double { didSet { d.set(margin, forKey: "stv.novel.margin") } }
     var theme: Theme { didSet { d.set(theme.rawValue, forKey: "stv.novel.theme") } }
     var turn: Turn { didSet { d.set(turn.rawValue, forKey: "stv.novel.turn") } }
     var serif: Bool { didSet { d.set(serif, forKey: "stv.novel.serif") } }
+    var indent: Bool { didSet { d.set(indent, forKey: "stv.novel.indent") } }
     private let d = UserDefaults.standard
 
     private init() {
-        fontSize = d.object(forKey: "stv.novel.font") as? Double ?? 19
-        spacing = d.object(forKey: "stv.novel.spacing") as? Int ?? 1
+        fontSize = d.object(forKey: "stv.novel.font") as? Double ?? 18
+        lineSpacing = d.object(forKey: "stv.novel.lineSpacing") as? Double ?? 0.5
+        margin = d.object(forKey: "stv.novel.margin") as? Double ?? 0.3
         theme = Theme(rawValue: d.integer(forKey: "stv.novel.theme")) ?? .white
         turn = Turn(rawValue: d.integer(forKey: "stv.novel.turn")) ?? .slide
-        serif = d.object(forKey: "stv.novel.serif") as? Bool ?? true
+        serif = d.bool(forKey: "stv.novel.serif")
+        indent = d.object(forKey: "stv.novel.indent") as? Bool ?? true
     }
 }

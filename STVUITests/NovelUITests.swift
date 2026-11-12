@@ -48,15 +48,25 @@ final class NovelUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["第三章 灯塔"].waitForExistence(timeout: 3), "did not jump to 第三章")
         XCTAssertEqual(pageLabel().0, 1)
 
-        // Settings: A+ re-paginates (more pages for the same chapter).
-        let before = pageLabel().1
+        // 设置: dragging the 字号 slider to the big end re-paginates (more pages for the same chapter).
         win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         el("novel.menu.设置").tap()
-        XCTAssertTrue(el("novel.font.plus").waitForExistence(timeout: 3))
-        for _ in 0..<6 { el("novel.font.plus").tap() }
-        el("novel.theme.1").tap()
-        shot("novel_04_settings")
-        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()   // close the menu
+        let size = el("novel.font.size")
+        XCTAssertTrue(size.waitForExistence(timeout: 3))
+        // Prefs persist between runs: start from the small end, then go big.
+        size.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.05, thenDragTo: size.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)))
+        let before = pageLabel().1
+        size.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).press(forDuration: 0.05, thenDragTo: size.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)))
+        shot("novel_04_font")
+        el("novel.menu.亮度").tap()
+        XCTAssertTrue(el("novel.theme.2").waitForExistence(timeout: 3))
+        el("novel.theme.2").tap()
+        shot("novel_04b_colors")
+        el("novel.menu.进度").tap()
+        shot("novel_04c_progress")
+        el("novel.menu.目录").tap()
+        shot("novel_04d_toc")
+        win.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()   // close the menu
         XCTAssertGreaterThan(pageLabel().1, before, "bigger font did not add pages")
         shot("novel_05_paper")
     }
