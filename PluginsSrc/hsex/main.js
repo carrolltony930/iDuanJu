@@ -187,16 +187,35 @@ export default {
     if (!m) throw host.error('E_PARSE', '播放地址无法解析');
     const path = m[2] || '/', query = m[3] || '';
 
-    const streams = [];
-    for (const node of CDN_HOSTS) {
-      streams.push({
-        name: node.name,
-        url: 'https://' + node.host + path + query,
+    // 4 条线路指向同一个 CDN，只有 host 不同。逐条探一下，只返回真正能取到数据的，
+    // 这样就不用在播放器里手动切换（切换会触发 App 的一处卡死）。
+    const all = CDN_HOSTS.map(function (node) {
+      return { name: node.name, url: 'https://' + node.host + path + query };
+    });
+    const alive = [];
+    for (let i = 0; i < all.length && i < 3; i++) {
+      if (alive.length >= 2) break;
+      try {
+        const r = await host.http.request({
+          url: all[i].url,
+          headers: { 'Referer': SITE + '/', 'Range': 'bytes=0-1' },
+          timeout: 3000
+        });
+        if (r.status >= 200 && r.status < 400) alive.push(all[i]);
+      } catch (e) { /* 探测失败就跳过这条 */ }
+    }
+    // 全都不通时退回默认线路，让播放器自己试
+    const use = alive.length ? alive : [all[0]];
+
+    const streams = use.map(function (s) {
+      return {
+        name: s.name,
+        url: s.url,
         format: 'hls',
         headers: { 'Referer': SITE + '/' }
-      });
-    }
-    host.log('play ' + id + ' → ' + streams.length + ' 条线路');
+      };
+    });
+    host.log('play ' + id + ' → ' + streams.length + ' 条可用线路（探测 ' + Math.min(all.length, 3) + ' 条）');
     for (const s of streams) host.log('  ' + s.name + ' ' + s.url);
     return { streams: streams };
   }
