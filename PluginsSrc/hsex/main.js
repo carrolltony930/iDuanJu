@@ -187,25 +187,45 @@ export default {
     if (!m) throw host.error('E_PARSE', '播放地址无法解析');
     const path = m[2] || '/', query = m[3] || '';
 
-    // 4 条线路指向同一个 CDN，只有 host 不同。逐条探一下，只返回真正能取到数据的，
-    // 这样就不用在播放器里手动切换（切换会触发 App 的一处卡死）。
+    // 4 条线路指向同一个 CDN，只有 host 不同。分两步探：
+    //   ① 先看谁的主播放列表能取到
+    //   ② 再对能取到的线路，探它的第一个分片（有的线路 m3u8 能取、分片却取不到）
+    // 只把真正能播的 1~2 条交出去，避免你在播放器里手动切换（切换会触发 App 的卡死）。
     const all = CDN_HOSTS.map(function (node) {
       return { name: node.name, url: 'https://' + node.host + path + query };
     });
-    const alive = [];
-    for (let i = 0; i < all.length && i < 3; i++) {
-      if (alive.length >= 2) break;
+    const hdr = { 'Referer': SITE + '/', 'User-Agent': UA };
+
+    const m3u8ok = [];
+    for (let i = 0; i < all.length; i++) {
       try {
-        const r = await host.http.request({
-          url: all[i].url,
-          headers: { 'Referer': SITE + '/', 'Range': 'bytes=0-1' },
-          timeout: 3000
-        });
-        if (r.status >= 200 && r.status < 400) alive.push(all[i]);
-      } catch (e) { /* 探测失败就跳过这条 */ }
+        const r = await host.http.request({ url: all[i].url, headers: hdr, timeout: 2500 });
+        if (r.status >= 200 && r.status < 400) {
+          m3u8ok.push({ item: all[i], body: typeof r.body === 'string' ? r.body : '' });
+        }
+      } catch (e) { /* 这条不通 */ }
     }
-    // 全都不通时退回默认线路，让播放器自己试
-    const use = alive.length ? alive : [all[0]];
+
+    const alive = [];
+    for (let i = 0; i < m3u8ok.length && i < 3; i++) {
+      if (alive.length >= 2) break;
+      let seg = '';
+      const lines = m3u8ok[i].body.split(/\r?\n/);
+      for (let k = 0; k < lines.length; k++) {
+        const s = lines[k].trim();
+        if (!s || s.charAt(0) === '#') continue;
+        seg = s;
+        break;
+      }
+      if (!seg) { alive.push(m3u8ok[i].item); continue; }   // 主播放列表，没有分片，先当可用
+      const segUrl = seg.indexOf('http') === 0 ? seg : m3u8ok[i].item.url.replace(/[^\/]*$/, '') + seg;
+      try {
+        const r2 = await host.http.request({ url: segUrl, headers: hdr, timeout: 2500 });
+        if (r2.status >= 200 && r2.status < 400) alive.push(m3u8ok[i].item);
+      } catch (e) { /* 分片不通，丢掉这条线路 */ }
+    }
+
+    const use = alive.length ? alive : (m3u8ok.length ? [m3u8ok[0].item] : [all[0]]);
 
     const streams = use.map(function (s) {
       return {
@@ -215,7 +235,7 @@ export default {
         headers: { 'Referer': SITE + '/', 'User-Agent': UA }
       };
     });
-    host.log('play ' + id + ' → ' + streams.length + ' 条可用线路（探测 ' + Math.min(all.length, 3) + ' 条）');
+    host.log('play ' + id + ' → ' + streams.length + ' 条可用线路（m3u8 通过 ' + m3u8ok.length + ' / 4）');
     for (const s of streams) host.log('  ' + s.name + ' ' + s.url);
     return { streams: streams };
   }
