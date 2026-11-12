@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "com.idj.p91",
+  "name": "91porn",
+  "version": "1.0.0",
+  "author": { "name": "carrolltony930" },
+  "description": "91porn：最新 / 11 个分类 / 搜索 + MP4 直链。单集长视频。",
+  "type": "video",
+  "adult": true,
+  "language": ["zh"],
+  "minAppVersion": "1.5",
+  "entry": "main.js",
+  "permissions": {
+    "http": ["91porn.com", "www.91porn.com"],
+    "media": ["*.rsc.cdn77.org", "*.btc620.com"],
+    "cloudflare": false,
+    "storage": true,
+    "login": false
+  },
+  "capabilities": ["home", "category", "search", "detail", "play"],
+  "settings": []
+}
