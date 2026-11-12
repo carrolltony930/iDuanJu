@@ -59,6 +59,16 @@ enum HomeSource: Hashable, Identifiable {
         case .channels, .manga, .novel: []
         }
     }
+    /// 当前页面对应的搜索站源：在首页搜索时直接搜这个源，而不是全局。
+    /// 频道 / 漫画 / 小说 没有对应的影视站源，返回 nil（走全局搜索）。
+    var searchSource: DramaSource? {
+        switch self {
+        case .site(let s): s
+        case .hongguo, .ai: .hongguo
+        case .huangguo: .huangguo
+        case .channels, .manga, .novel: nil
+        }
+    }
     @MainActor static var all: [HomeSource] {
         let g = SourceGate.shared
         return [.hongguo] + (g.showHuangguo ? [.huangguo] : []) + [.ai] + g.visibleSites.map { .site($0) } + [.channels, .manga, .novel]
@@ -145,7 +155,7 @@ struct HomeView: View {
     private var header: some View {
         VStack(spacing: 2) {
             HStack(spacing: 0) {
-                NavigationLink(value: Route.search) {
+                NavigationLink(value: source.searchSource.map { Route.searchIn($0) } ?? Route.search) {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass").font(.system(size: 18, weight: .medium))
                         Text("搜索你想看的作品").font(.system(size: 16)).opacity(0.8).lineLimit(1)

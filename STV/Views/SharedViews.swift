@@ -67,6 +67,8 @@ enum Route: Hashable {
     case actor(HGCelebrity)
     case search
     case searchFor(String)
+    /// 从首页某个站源里点搜索：直接在该站源里搜，而不是全局搜索。
+    case searchIn(DramaSource)
     case actorRank
     case favorites
     case history
@@ -107,6 +109,7 @@ extension View {
             case .actor(let a): ActorView(actor: a)
             case .search: SearchView(pushed: true)
             case .searchFor(let q): SearchView(pushed: true, initialQuery: q)
+            case .searchIn(let s): SearchView(pushed: true, initialSource: s)
             case .actorRank: ActorRankView()
             case .favorites: LibraryListView(kind: .favorites)
             case .history: LibraryListView(kind: .history)
