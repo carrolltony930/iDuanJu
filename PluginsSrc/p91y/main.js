@@ -8,15 +8,43 @@
 // 详情页的播放地址直接写在 <video id="video-play" data-src="…index.m3u8"
 // data-poster="…jpg"> 里，不用解 Packer、没有 iframe 播放器、没有人机验证。
 
-const SITE = 'https://91porny.com';
+// 同一套系统有多个域名（内容/结构/接口完全一致），互为主备：
+//   91porny.com（九色 / 91PORNY） · jiuse.icu（九色）
+// 首次调用时探测哪个通，选中的域名记进 host.storage，之后一直用。
+const DOMAINS = ['91porny.com', 'jiuse.icu'];
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-const HEADERS = {
-  'User-Agent': UA,
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'zh-CN,zh;q=0.9',
-  'Referer': SITE + '/'
-};
+let SITE = 'https://' + DOMAINS[0];
+
+function headers() {
+  return {
+    'User-Agent': UA,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9',
+    'Referer': SITE + '/'
+  };
+}
+
+let sitePicked = false;
+async function pickSite() {
+  if (sitePicked) return;
+  sitePicked = true;
+  const saved = host.storage.get('site');
+  if (saved && DOMAINS.indexOf(String(saved)) >= 0) {
+    SITE = 'https://' + saved;
+    return;
+  }
+  for (const d of DOMAINS) {
+    try {
+      const r = await host.http.request({ url: 'https://' + d + '/video', headers: headers(), timeout: 10000 });
+      if (r.status >= 200 && r.status < 400) {
+        SITE = 'https://' + d;
+        host.storage.set('site', d);
+        return;
+      }
+    } catch (e) { /* 换下一个域名 */ }
+  }
+}
 
 const CATEGORIES = [
   { id: 'video', name: '最新视频' },
@@ -38,7 +66,7 @@ function clean(s) {
 }
 
 async function req(path) {
-  const res = await host.http.request({ url: path.indexOf('http') === 0 ? path : SITE + path, headers: HEADERS, timeout: 25000 });
+  const res = await host.http.request({ url: path.indexOf('http') === 0 ? path : SITE + path, headers: headers(), timeout: 25000 });
   if (res.status === 429) throw host.error('E_RATE_LIMIT', '站点限流了，等 1~2 分钟再试');
   if (res.status === 404) throw host.error('E_NOT_FOUND', '页面不存在');
   if (res.status < 200 || res.status >= 300) throw host.error('E_HTTP', 'HTTP ' + res.status + ' ' + path);
@@ -104,11 +132,13 @@ function detailPath(id) {
 
 export default {
   async home() {
+    await pickSite();
     const html = await req('/video');
     return { categories: CATEGORIES, items: parseCards(html), hasMore: true };
   },
 
   async category(input) {
+    await pickSite();
     const id = String(input.id || 'video');
     const page = Math.max(1, Number(input.page || 1));
     const kind = CATEGORIES.some(function (c) { return c.id === id; }) ? id : 'video';
@@ -117,6 +147,7 @@ export default {
   },
 
   async search(input) {
+    await pickSite();
     const kw = clean(input.keyword || '');
     const page = Math.max(1, Number(input.page || 1));
     if (!kw) return { items: [], page: 1, hasMore: false };
@@ -125,6 +156,7 @@ export default {
   },
 
   async detail(input) {
+    await pickSite();
     const path = detailPath(input.id);
     if (!path) throw host.error('E_NOT_FOUND', '缺少视频 id');
     const html = await req(path);
@@ -139,6 +171,7 @@ export default {
   },
 
   async play(input) {
+    await pickSite();
     const id = String(input.episodeId || input.id || '');
     const path = detailPath(id);
     if (!path) throw host.error('E_NOT_FOUND', '缺少视频 id');
