@@ -252,6 +252,8 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         if pip?.isPictureInPictureActive == true {
             pip?.stopPictureInPicture()
         }
+        pipObservation = nil
+        pip?.delegate = nil
         pip = nil
         pipIdentity = nil
         pipActive = false
@@ -281,96 +283,120 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
 
     /// (Re)build the PiP controller when the active core's picture route changes.
     private func refreshPiP() {
-        let id = engine.pipIdentity
-        // 用户要求：滑出后台不得自动进入画中画。Aether 软件解码路径下
-        // canStartPictureInPictureAutomaticallyFromInline 在 iOS 17 不生效，
-        // 因此后台直接拆除 controller（系统没有 controller 就无法自动启动），
-        // 且不推进 pipIdentity，回前台 didBecomeActive() 会重建以供手动按钮使用。
-        guard !backgrounded || userInitiatedPiP else {
+        // 关键：默认【不创建】任何 AVPictureInPictureController。
+        // 系统只有在手里存在一个 controller 时，才会在 App 进入后台自动拉起画中画；
+        // 既然平时没有，就不可能出现「自动画中画闪一下又消失」。
+        // 手动画中画由 togglePiP() / ensurePiPController() 按需创建。
+        pipPossible = AVPictureInPictureController.isPictureInPictureSupported()
+        guard !userInitiatedPiP, !pipActive else { return }
+        if pip != nil {
             pipObservation = nil
             pip?.delegate = nil
             pip = nil
-            pipPossible = false
             pipIdentity = nil
+        }
+    }
+
+    /// 仅在用户主动点「画中画」按钮时创建 controller；平时系统手里没有 controller。
+    private func ensurePiPController() -> AVPictureInPictureController? {
+        if let pip, pipIdentity == engine.pipIdentity { return pip }
+        guard engine.pipIdentity != nil, AVPictureInPictureController.isPictureInPictureSupported(),
+              let controller = engine.makePiPController() else { return nil }
+        controller.delegate = self
+        controller.canStartPictureInPictureAutomaticallyFromInline = false
+        pipIdentity = engine.pipIdentity
+        pip = controller
+        pipObservation = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] c, _ in
+            Task { @MainActor in
+                guard self?.pip === c else { return }
+                self?.pipPossible = AVPictureInPictureController.isPictureInPictureSupported()
+            }
+        }
+        return controller
+    }
+
+    func togglePiP() {
+        // 已开启 → 关闭
+        if let pip, pip.isPictureInPictureActive {
+            restoringPiP = true
+            pip.stopPictureInPicture()
             return
         }
-        guard id != pipIdentity else { return }
-        guard !pipActive else { return }                 // never swap under a live PiP window
-        pipIdentity = id
-        pipObservation = nil
-        pip?.delegate = nil
-        pip = nil
-        pipPossible = false
-        guard id != nil, AVPictureInPictureController.isPictureInPictureSupported(),
-              let controller = engine.makePiPController() else { return }
-        controller.delegate = self
-        // Automatic PiP when the app is backgrounded is disabled on purpose (user request).
-        // The manual PiP button (togglePiP) and the controller itself stay available.
-        controller.canStartPictureInPictureAutomaticallyFromInline = false
-        pip = controller
-        pipObservation = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] controller, _ in
+        guard let controller = ensurePiPController() else { return }
+        userInitiatedPiP = true
+        if controller.isPictureInPicturePossible {
+            controller.startPictureInPicture()
+        } else {
+            // 刚创建时 isPictureInPicturePossible 可能还没翻上来，稍等再启动一次。
             Task { @MainActor in
-                guard self?.pip === controller else { return }
-                self?.pipPossible = controller.isPictureInPicturePossible
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard self.pip === controller, self.userInitiatedPiP,
+                      controller.isPictureInPicturePossible,
+                      !controller.isPictureInPictureActive else {
+                    // 启动不了就复位，避免后台清理逻辑被永久跳过。
+                    if self.pip === controller { self.userInitiatedPiP = false }
+                    return
+                }
+                controller.startPictureInPicture()
             }
         }
     }
 
-    func togglePiP() {
-        guard let pip else { return }
-        if pip.isPictureInPictureActive {
-            restoringPiP = true
-            userInitiatedPiP = false
-            pip.stopPictureInPicture()
-        } else if pip.isPictureInPicturePossible {
-            userInitiatedPiP = true
-            pip.startPictureInPicture()
-        }
-    }
-
     func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
-        // 后台且非用户点按钮 = 系统自动画中画，一律拒绝。
-        if backgrounded && !userInitiatedPiP { return }
+        // 只有用户主动点按钮才允许进入画中画。
+        guard userInitiatedPiP else { return }
         pipActive = true
         engine.setPiPActive(true)
     }
 
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
-        // 兜底：Aether 软件解码用 AVPictureInPictureController(contentSource:)，
-        // canStartPictureInPictureAutomaticallyFromInline 在 iOS 17 对它不生效，
-        // 若系统仍在后台把窗口拉起，这里立刻关掉。
-        if backgrounded && !userInitiatedPiP { controller.stopPictureInPicture() }
+        // 兜底：只拦截「非用户主动」的自动拉起；用户手动开的画中画切后台应继续播放。
+        if !userInitiatedPiP {
+            controller.stopPictureInPicture()
+        }
     }
 
     func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
         pipActive = false
+        userInitiatedPiP = false
         if !backgrounded { pipError = error.localizedDescription }
     }
 
     func pictureInPictureController(_ controller: AVPictureInPictureController,
                                     restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completion: @escaping (Bool) -> Void) {
+        // 播放器 UI 本来就在，必须告诉系统「已恢复」。
+        // 回 false 会让系统留下黑屏 + 「返回播放器」的恢复占位界面（v7 的黑屏卡死根因）。
         restoringPiP = true
-        completion(controller === pip && observer != nil)
+        completion(true)
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
-        let rejectedAutoPiP = backgrounded && !userInitiatedPiP
         pipActive = false
         engine.setPiPActive(false)
-        if rejectedAutoPiP {
-            // 自动画中画被拒绝：保持原有播放状态，不误暂停（避免回前台断流）。
-        } else if !restoringPiP { setPaused(true) }
-        // Returning from PiP used to require `engine.isPaused`; a software-route stall does not
-        // flip that flag, so playback was left dead. Re-arm the session and resume unconditionally.
-        else if !backgrounded, !paused, readyIndex != nil { activateAudioSession(); play() }
-        restoringPiP = false
         userInitiatedPiP = false
+        restoringPiP = false
+        // 任何 PiP 结束都销毁 controller，系统手里没有 controller 就不会再自动拉起。
+        pipObservation = nil
+        pip?.delegate = nil
+        pip = nil
+        pipIdentity = nil
+        // 回前台无条件续播，避免断流。
+        if !backgrounded, !paused, readyIndex != nil {
+            activateAudioSession()
+            play()
+        }
     }
 
     func didEnterBackground() {
         backgrounded = true
-        // 禁止后台自动画中画：拆除 PiP controller（手动开启的会保留）。
-        refreshPiP()
+        // 保险：确保后台不残留任何 PiP controller（平时本来就没有）。
+        if !userInitiatedPiP {
+            pipObservation = nil
+            pip?.delegate = nil
+            pip = nil
+            pipIdentity = nil
+            pipActive = false
+        }
         // 显式激活 .playback 音频会话并落盘进度，保证切后台音视频会话不被拆掉。
         activateAudioSession()
         save(force: true)
@@ -379,12 +405,7 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     func didBecomeActive() {
         guard backgrounded else { return }
         backgrounded = false
-        if pip?.isPictureInPictureActive == true {
-            restoringPiP = true
-            pip?.stopPictureInPicture()
-        }
-        // 回到前台重建手动画中画按钮所需的 controller。
-        refreshPiP()
+        // 不重建任何 PiP controller；手动画中画按钮会在点击时按需创建。
         // 重新武装音频会话、清除过期中断标志并无条件续播，避免回前台断流。
         interrupted = false
         activateAudioSession()
