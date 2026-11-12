@@ -11,7 +11,7 @@ struct LibraryListView: View {
         Group {
             if kind == .favorites {
                 ScrollView {
-                    if library.favorites.isEmpty { empty("还没有收藏", "heart") }
+                    if library.favorites.isEmpty { empty("还没有收藏", "heart", hint: "在播放页右侧点 ♥ 收藏") }
                     else { NumberedGrid(items: library.favorites, numbered: false).padding(.vertical, 8) }
                 }
             } else if library.continueWatching.isEmpty {
@@ -77,7 +77,12 @@ struct LibraryListView: View {
         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 8))
     }
 
-    private func empty(_ t: String, _ icon: String) -> some View {
-        ContentUnavailableView(t, systemImage: icon).padding(.top, 80)
+    private func empty(_ t: String, _ icon: String, hint: String? = nil) -> some View {
+        ContentUnavailableView {
+            Label(t, systemImage: icon)
+        } description: {
+            if let hint { Text(hint) }
+        }
+        .padding(.top, 80)
     }
 }
