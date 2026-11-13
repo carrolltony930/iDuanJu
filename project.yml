@@ -36,8 +36,10 @@ targets:
       # 2.0(17)：黄果线路自动发现 + /api/search 接口探测，修复「选到发布页导致点播放失败」。
       # 2.2(19)：黄果加密 HLS 强制走 HLSPlayback 自代理 key（修 -19152）；播放器去掉两侧
       # 快进/快退圆钮、缩小暂停键，报错时不再画中心按钮，错误文案改短中文。
-      MARKETING_VERSION: "2.2"
-      CURRENT_PROJECT_VERSION: "19"
+      # 2.3(20)：加运行日志（Documents/stv.log，可见于「文件」App）+ 失败浮层显示 key/playlist
+      # 真实结果，用于定位 -19152 到底卡在 403、超时还是没发请求。
+      MARKETING_VERSION: "2.3"
+      CURRENT_PROJECT_VERSION: "20"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h
@@ -48,6 +50,8 @@ targets:
       path: STV/Info.plist
       properties:
         CFBundleDisplayName: i短剧
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         NSFaceIDUsageDescription: 用于解锁「片源管理」里隐藏的长视频片源
         NSPhotoLibraryAddUsageDescription: 用于把你下载的图片和视频保存到相册
         LSApplicationQueriesSchemes: [tg]

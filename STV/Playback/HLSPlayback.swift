@@ -35,6 +35,7 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
     func makeAsset(url: String) -> AVURLAsset? {
         guard var c = URLComponents(string: url) else { return nil }
         let isHLS = url.lowercased().contains(".m3u8") || url.contains("/m3u8/")
+        STVLog.w("hls asset isHLS=\(isHLS) keyHex=\(keyHex.count) hdr=\(headers.count) u=\(String(url.suffix(80)))")
         if isHLS { c.scheme = c.scheme == "http" ? Self.plScheme + "-http" : Self.plScheme }
         guard let u = c.url else { return nil }
         let asset = AVURLAsset(url: u, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
@@ -119,7 +120,9 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
             kd = Self.keyBytes(d)
         }
         if kd == nil {
-            NSLog("%@", "[STV] hls-key fail status=\((resp as? HTTPURLResponse)?.statusCode ?? -1) bytes=\(data?.count ?? 0) err=\(err.map { "\($0)" } ?? "-")")
+            STVLog.w("hls-key fail status=\((resp as? HTTPURLResponse)?.statusCode ?? -1) bytes=\(data?.count ?? 0) host=\(req.request.url?.host ?? "-") err=\(err.map { "\($0)" } ?? "-")")
+        } else {
+            STVLog.w("hls-key ok \(kd?.count ?? 0)B status=\((resp as? HTTPURLResponse)?.statusCode ?? -1)")
         }
         finishKey(req, id: id, keyData: kd)
     }
@@ -152,7 +155,7 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
         STVAVLoadingGuard.guarded {
             guard let data, err == nil,
                   (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false else {
-                NSLog("%@", "[STV] hls-fail status=\((resp as? HTTPURLResponse)?.statusCode ?? -1) host=\(real.host ?? "?") path=\(real.path.prefix(70)) ct=\(resp?.mimeType ?? "-") err=\(err.map { "\($0)" } ?? "-")")
+                STVLog.w("hls-fail status=\((resp as? HTTPURLResponse)?.statusCode ?? -1) host=\(real.host ?? "?") path=\(real.path.prefix(70)) ct=\(resp?.mimeType ?? "-") err=\(err.map { "\($0)" } ?? "-")")
                 return
             }
             let text = self.rewrite(HLSAdFilter.apply(String(decoding: data, as: UTF8.self), base: real), base: real)
@@ -160,6 +163,9 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
             req.contentInformationRequest?.contentLength = Int64(text.utf8.count)
             req.dataRequest?.respond(with: Data(text.utf8))
             ok = true
+            let nk = text.components(separatedBy: "#EXT-X-KEY").count - 1
+            let ns = text.components(separatedBy: "stvkey").count - 1
+            STVLog.w("hls-pl ok \(text.utf8.count)B keys=\(nk) stvkey=\(ns) segs=\(text.components(separatedBy: ".ts").count - 1)")
         }
         // Same as finishKey: unconditional finish (in ObjC frame) so a swallowed setup exception
         // can never leave the request hanging.

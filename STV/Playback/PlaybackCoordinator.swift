@@ -55,7 +55,12 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         default:
             reason = "播放失败"
         }
-        return "\(reason)（\(ns.code)\(under)），点重试"
+        var out = "\(reason)（\(ns.code)\(under)），点重试"
+        // 诊断尾部：把最近一次 HLS key/playlist 的真实结果直接摆在屏幕上，
+        // 这样失败时拍一张图就能判断是 403、超时还是根本没发请求。
+        let d = STVLog.diag
+        if !d.isEmpty { out += "\n" + String(d.prefix(72)) }
+        return out
     }
 
     static let rateSteps: [Double] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
@@ -762,8 +767,10 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
                 // 加载超时，真机 2026-11-13）。统一交给 HLSPlayback：playlist 与 key 都经它的
                 // resourceLoader，带 Referer / User-Agent / x-cdn-auth，且 key 永不留成裸 https。
                 if series.source == .huangguo, s.kind == .hls || s.kind == .hlsAES {
+                    STVLog.w("route hg->HLSPlayback kind=\(s.kind) key=\(s.key.count) idx=\(i)")
                     return .stream(HLSPlayback(headers: s.headers, keyHex: s.key), s.url)
                 }
+                STVLog.w("route kind=\(s.kind) src=\(series.source.rawValue) budget=\(budget) aether=\(viaAether) key=\(s.key.count)")
                 if budget > 0, let proxied = await self?.prebuffered(s, budget: budget, index: i) { return proxied }
                 if viaAether, s.kind != .mp4Clear, s.key.isEmpty {
                     // Aether hands HLS to AVPlayer on a URL: keep our playlist rewriting (ad-strip, headers,
