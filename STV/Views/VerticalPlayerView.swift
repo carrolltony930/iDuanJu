@@ -296,7 +296,9 @@ struct PlayerScreen: View {
             }
             // 旋转请求必须再往后放：requestGeometryUpdate 在 pop 动画期间调用会一直等旋转事务，
             // 主线程被占住，表现就是「左上角返回后整个界面卡死」。竖屏状态下也无需重复请求。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // 1.2 秒：close() 里可能是「先转正再关闭」，转屏 completion 最长 0.7 秒，
+            // 这里必须等在那之后，否则又会插进旋转事务里。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                 // 快速「返回 → 再点进去」时，新的播放器可能已经打开。这时若还去锁竖屏，
                 // 会和它的 unlock 打架，表现为「点进去了但整个播放器横不过来 / 黑一下」。
                 guard PlayerPresenter.shared.route == nil else { return }
@@ -443,16 +445,22 @@ struct PlayerScreen: View {
 
     /// 返回的唯一出口：连点只放行一次，1.2 秒后自动解锁。
     ///
-    /// 叠层呈现时走 `onClose`（外层把 route 置空，视图直接移除）；没有回调时才退回
-    /// `dismiss()`。两种情况都要把 `PlayerPresenter.route` 清掉，否则下次点播放时
-    /// id 没变，SwiftUI 会认为「已经是这个页面」而不重建。
+    /// 顺序有讲究 —— **先转正、再消失**：
+    /// 如果直接撤掉播放器，页面会先按横屏尺寸重排一次布局，紧接着系统再把窗口转回竖屏；
+    /// 旋转被这次重排打断，窗口就停在中间尺寸。画面看着没变（轮播还在动），但触摸坐标系
+    /// 错位，点哪都没反应 —— 正是用户「横屏看完点返回就卡死」的那条路径。
+    /// 让旋转发生在播放器仍占满屏幕、页面还没开始重排的时候，两次事务就分开了。
     private func close() {
         guard !closing else { return }
         closing = true
-        // 叠层呈现：由外层把 route 置空，视图直接移除，不经过任何 UIKit 转场控制器。
-        if let onClose { onClose() } else { dismiss() }
-        PlayerPresenter.shared.clear(after: 0.45)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { closing = false }
+        let finish = {
+            // 叠层呈现：外层把 route 置空，视图直接移除，不经过任何 UIKit 转场控制器。
+            if let cb = self.onClose { cb() } else { self.dismiss() }
+        }
+        // 不判断 landscape：exitToPortrait 内部会看 scene 的真实朝向，已经是竖屏就立即回调。
+        // 用 vClass 判断会有漏网 —— 旋转途中 vClass 还没更新成 .compact。
+        OrientationGate.exitToPortrait(completion: finish)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { closing = false }
     }
 
     private var controlsVisible: Bool {
