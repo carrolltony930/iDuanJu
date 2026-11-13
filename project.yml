@@ -34,8 +34,10 @@ targets:
       # 版本规则：每次功能更新 MARKETING_VERSION +0.1（1.6 → 1.7 → 1.8 …），
       # CURRENT_PROJECT_VERSION 同步 +1。TrollStore 靠 build 号判断覆盖安装，两个都要涨。
       # 2.0(17)：黄果线路自动发现 + /api/search 接口探测，修复「选到发布页导致点播放失败」。
-      MARKETING_VERSION: "2.1"
-      CURRENT_PROJECT_VERSION: "18"
+      # 2.2(19)：黄果加密 HLS 强制走 HLSPlayback 自代理 key（修 -19152）；播放器去掉两侧
+      # 快进/快退圆钮、缩小暂停键，报错时不再画中心按钮，错误文案改短中文。
+      MARKETING_VERSION: "2.2"
+      CURRENT_PROJECT_VERSION: "19"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h

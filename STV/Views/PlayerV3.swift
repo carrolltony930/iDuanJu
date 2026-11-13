@@ -88,37 +88,32 @@ struct PlayerCenterControls: View {
     var body: some View {
         let loading = co.readyIndex == nil || (co.waitingForMedia && !co.paused)
         let buffered = co.duration > 0 ? min(1, co.bufferedUntil / co.duration) : 0
-        HStack(spacing: 46) {
-            Button { co.seek(by: -10); onInteract() } label: {
-                Image(systemName: "gobackward.10").font(.system(size: 26, weight: .regular)).frame(width: 44, height: 44)
-            }.accessibilityLabel("快退10秒").accessibilityIdentifier("player.back10")
-            Button { co.togglePause(); onInteract() } label: {
-                ZStack {
-                    Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
-                    Circle().fill(.black.opacity(0.32))
-                    Circle().stroke(.white.opacity(0.22), lineWidth: 2)
-                    if loading {
-                        Circle().trim(from: 0, to: 0.28).stroke(.white, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                            .rotationEffect(.degrees(spin ? 360 : 0))
-                            .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spin)
-                            .onAppear { spin = true }.onDisappear { spin = false }
-                    } else {
-                        Circle().trim(from: 0, to: buffered).stroke(.white.opacity(0.75), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                    }
-                    Image(systemName: co.paused ? "play.fill" : "pause.fill").font(.system(size: 30, weight: .regular))
-                        .offset(x: co.paused ? 2 : 0)
+        // 只留一个低调的播放/暂停键。快退/快进已由「双击左侧/右侧三分区 −10s/+10s」覆盖，
+        // 原来的左右两个 44pt 圆钮 + 76pt 大圆常驻画面正中太抢眼，还会压住报错文字。
+        Button { co.togglePause(); onInteract() } label: {
+            ZStack {
+                Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
+                Circle().fill(.black.opacity(0.22))
+                Circle().stroke(.white.opacity(0.18), lineWidth: 1.5)
+                if loading {
+                    Circle().trim(from: 0, to: 0.28).stroke(.white, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .rotationEffect(.degrees(spin ? 360 : 0))
+                        .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spin)
+                        .onAppear { spin = true }.onDisappear { spin = false }
+                } else {
+                    Circle().trim(from: 0, to: buffered).stroke(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
                 }
-                .frame(width: 76, height: 76)
+                Image(systemName: co.paused ? "play.fill" : "pause.fill").font(.system(size: 22, weight: .regular))
+                    .offset(x: co.paused ? 2 : 0)
             }
-            .accessibilityLabel(co.paused ? "播放" : "暂停").accessibilityIdentifier("player.playPause")
-            Button { co.seek(by: 10); onInteract() } label: {
-                Image(systemName: "goforward.10").font(.system(size: 26, weight: .regular)).frame(width: 44, height: 44)
-            }.accessibilityLabel("快进10秒").accessibilityIdentifier("player.fwd10")
+            .frame(width: 56, height: 56)
+            .opacity(0.9)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white)
-        .shadow(color: .black.opacity(0.35), radius: 6)
+        .shadow(color: .black.opacity(0.3), radius: 5)
+        .accessibilityLabel(co.paused ? "播放" : "暂停").accessibilityIdentifier("player.playPause")
     }
 }
 

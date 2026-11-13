@@ -161,7 +161,8 @@ struct PlayerScreen: View {
                     } else if locked {
                         if controlsVisible { lockOnly(full, ins: ins).transition(.opacity) }
                     } else if controlsVisible {
-                        if co.current != nil, !scrubbing, panel == nil {
+                        // 报错/重试时不要再画中心按钮：它正好压在错误文字上，把提示挡住。
+                        if let cur = co.current, !scrubbing, panel == nil, co.errors[cur] == nil {
                             PlayerCenterControls(co: co, onInteract: flashChrome)
                                 .position(x: landscape ? full.width / 2 : rect.midX, y: landscape ? full.height / 2 : rect.midY)
                                 .transition(.opacity)

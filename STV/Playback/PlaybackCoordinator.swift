@@ -39,11 +39,23 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         return !stream.url.hasPrefix("tdfile://") && !stream.url.hasPrefix("file://") && LocalHLSProxy.token(of: stream.url) == nil
     }
 
-    /// User-facing failure text with the AVFoundation code (so a device report pins the cause).
+    /// User-facing failure text. Deliberately short Chinese: dumping NSError.localizedDescription
+    /// ("The operation couldn't be completed. (CoreMediaErrorDomain error -19152.)") stacked several
+    /// lines over the picture and got covered by the centre buttons. Keep a readable cause + the code
+    /// so a device report still pins it.
     static func failureText(_ e: Error?) -> String {
         guard let ns = e as NSError? else { return "播放失败，请重试" }
         let under = (ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { " / \($0.code)" } ?? ""
-        return "\(ns.localizedDescription)（\(ns.code)\(under)）"
+        let reason: String
+        switch ns.domain {
+        case "CoreMediaErrorDomain":
+            reason = ns.code == -19152 ? "密钥加载超时" : "解码失败"
+        case NSURLErrorDomain:
+            reason = ns.code == NSURLErrorTimedOut ? "连接超时" : "网络错误"
+        default:
+            reason = "播放失败"
+        }
+        return "\(reason)（\(ns.code)\(under)），点重试"
     }
 
     static let rateSteps: [Double] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
@@ -745,6 +757,13 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
                     return .remote(u, s.headers)
                 }
                 let budget = bypass ? 0 : BufferSettings.budget(for: series.source)
+                // 黄果 AES-128：key 由我们带全套 headers 自己取。走 LocalHLSProxy 的 /r 代理，
+                // 或让 AVFoundation 裸取 playlist 里的 key URI，换线路后都会 -19152（加密密钥
+                // 加载超时，真机 2026-11-13）。统一交给 HLSPlayback：playlist 与 key 都经它的
+                // resourceLoader，带 Referer / User-Agent / x-cdn-auth，且 key 永不留成裸 https。
+                if series.source == .huangguo, s.kind == .hls || s.kind == .hlsAES {
+                    return .stream(HLSPlayback(headers: s.headers, keyHex: s.key), s.url)
+                }
                 if budget > 0, let proxied = await self?.prebuffered(s, budget: budget, index: i) { return proxied }
                 if viaAether, s.kind != .mp4Clear, s.key.isEmpty {
                     // Aether hands HLS to AVPlayer on a URL: keep our playlist rewriting (ad-strip, headers,
