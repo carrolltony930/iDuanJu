@@ -59,8 +59,16 @@ targets:
       #   2.7 换成 fullScreenCover 后仍能在「进出五六次」后复现，且这次没有 < Back、
       #   画面干净、轮播还在动 —— 残留的是 modal 的 presentation 容器（透明、全屏、吃触摸）。
       #   叠层只有视图插入/移除，没有可残留的容器，也没有可被打断的动画。
-      MARKETING_VERSION: "2.8"
-      CURRENT_PROJECT_VERSION: "25"
+      # 2.9(26)：补掉叠层方案剩下的三个入口，并加**运行时自愈**。
+      #   ① 播放器在屏时禁用导航栈的边缘返回手势（否则被 pop 的是播放器背后的详情页，
+      #      交互式 pop 一旦被打断，UITransitionView 又留在窗口上）。
+      #   ② 方向解锁从「非结构化 Task」改成 `.task`：视图消失即取消，不再在已关闭的
+      #      页面上请求重算方向。
+      #   ③ 新增 WindowGuard：每秒一次窗口中心 hitTest + 尺寸校验，发现「看不见但吃触摸」
+      #      的层、根视图被禁用、窗口尺寸错位就地纠正。即使根因判断有遗漏，用户最多卡 1 秒
+      #      就自动恢复，不会再出现「必须杀进程」。
+      MARKETING_VERSION: "2.9"
+      CURRENT_PROJECT_VERSION: "26"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h

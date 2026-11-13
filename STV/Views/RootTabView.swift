@@ -34,6 +34,9 @@ struct RootTabView: View {
             .allowsHitTesting(paths[tab].isEmpty)
         }
         .onAppear {
+            // 触摸自愈守卫：每秒做一次窗口中心 hitTest，发现「看不见但吃触摸」的层、
+            // 根视图被禁用、窗口尺寸错位，就地纠正。详见 WindowGuard。
+            WindowGuard.start()
             Router.handler = { r in
                 // 任何地方想 push 播放器，都改成叠层呈现。push 转场在 iOS 17 上会被方向刷新
                 // 和边缘返回手势打断，停在半路就是「半屏黑、触摸全死」。
@@ -66,7 +69,7 @@ struct RootTabView: View {
         .overlay {
             if let r = player.route {
                 VerticalPlayerView(series: r.series, startIndex: r.startIndex,
-                                   onClose: { player.route = nil })
+                                   onClose: { player.dismiss() })
                     // 每次呈现都用新的 id：连点「返回 → 再进」时，中间那次 nil 可能被
                     // SwiftUI 合并掉，id 不变就不会重建，表现成「点了没反应」。
                     .id(r.id)

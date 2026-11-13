@@ -32,6 +32,8 @@ struct PlayerRoute: Identifiable, Hashable {
     let id = UUID()
     let series: HGSeries
     let startIndex: Int?
+    /// 呈现时刻。用来判断「关闭得太早」——见 `dismiss()`。
+    let shownAt = Date()
 }
 
 final class PlayerPresenter: ObservableObject {
@@ -44,6 +46,27 @@ final class PlayerPresenter: ObservableObject {
 
     func present(_ series: HGSeries, at index: Int? = nil) {
         route = PlayerRoute(series: series, startIndex: index)
+    }
+
+    /// 关闭播放器。
+    ///
+    /// 用户实测的复现条件非常明确：**反复进出二十次都不触发，但「点播放之后立刻点返回」
+    /// 必触发**。也就是说真正的成因不是「返回」，而是「呈现还没落地就收到关闭」——
+    /// 两次状态变更叠在同一小段时间里。播放器现在虽然没有转场控制器，但插入／移除全屏视图
+    /// 仍会让 UIKit 做一次布局与安全区重算；紧接着又反向撤掉，就可能留下一个已经无效、
+    /// 却仍参与命中测试的层。
+    ///
+    /// 所以这里做一道时间隔离：呈现之后不足 260ms 就要求关闭时，等满 260ms 再真正移除。
+    /// 260ms 比一次系统 dismiss 动画（约 350ms）还短，手感上就是「点了之后播放器收起」，
+    /// 正常使用（看了一会儿才退）完全不受影响，延迟为 0。
+    func dismiss() {
+        guard let r = route else { return }
+        let wait = 0.26 - Date().timeIntervalSince(r.shownAt)
+        guard wait > 0 else { route = nil; return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            guard let self, self.route?.id == r.id else { return }
+            self.route = nil
+        }
     }
 
     /// 关闭动画结束后再把路由清空。
