@@ -1,8 +1,12 @@
 import AVFoundation
 
 /// Plays huangguo HLS (incl. AES-128) through AVPlayer.
-/// Playlists are fetched through a resourceLoader so we can attach Referer/Origin/X-User-Agent,
-/// and EXT-X-KEY URIs are rewritten to a local scheme that serves the key we already resolved.
+/// Playlists AND AES keys are fetched through a resourceLoader so we can attach
+/// Referer/Origin/X-User-Agent/x-cdn-auth to every request. A key URI is NEVER left as a bare
+/// https URI: AVFoundation does not propagate AVURLAssetHTTPHeaderFieldsKey to HLS sub-resource
+/// (key/segment) requests, so a bare key that needs those headers times out ->
+/// CoreMediaErrorDomain -19152 ("encryption key timeout"). We rewrite every key to our own custom
+/// scheme and serve it ourselves, exactly like the (working) stvhls playlist path.
 final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
     static let plScheme = "stvhls"
     static let keyScheme = "stvkey"
@@ -18,8 +22,8 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
     /// Requests AVFoundation handed us that we still owe a finish to. Touched only on `queue`.
     /// AVFCore raises an *uncatchable* ObjC NSInternalInconsistencyException (Swift cannot catch
     /// it, so it becomes std::terminate -> SIGABRT) when finishLoading is called on a request
-    /// that is already cancelled/finished, or more than once. That is exactly what happened when
-    /// the user tapped Back: teardown released the asset while a playlist fetch was in flight.
+    /// that is already cancelled/finished, or more than once. Every finish therefore goes through
+    /// STVAVLoadingGuard.finish (pure ObjC @try/@catch) and is issued at most once per id.
     private var pending: Set<ObjectIdentifier> = []
     private var tasks: [ObjectIdentifier: URLSessionDataTask] = [:]
 
@@ -43,16 +47,35 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
     func resourceLoader(_ loader: AVAssetResourceLoader,
                         shouldWaitForLoadingOfRequestedResource req: AVAssetResourceLoadingRequest) -> Bool {
         guard let url = req.request.url, let scheme = url.scheme else { return false }
-        if scheme == Self.keyScheme {
+        let isKey = scheme == Self.keyScheme || scheme == Self.keyScheme + "-http"
+        if isKey {
             let id = ObjectIdentifier(req)
             pending.insert(id)
-            // iOS 17 崩溃根因（2026-11-13 1.8(15) 真机 ips，SIGABRT on stv.hls.loader）：
-            // 不能在 shouldWaitFor... 同步 delegate 回调栈内调用 finishLoading。返回 true 的
-            // 契约是「我会稍后完成」，同步 finish 时 AVFoundation 还没把 request 登记为
-            // waiting，状态机冲突会抛不可捕获的 NSInternalInconsistencyException。
-            // playlist 路径本来就是异步 finish（URLSession 回调 → queue.async），所以从不崩。
-            // key 路径统一排到 delegate queue 的下一轮，delegate 先返回，再 finish。
-            queue.async { [weak self] in self?.finishKey(req, id: id) }
+            // NEVER finish synchronously inside this delegate callback on iOS 17: AVFCore has not
+            // yet registered the request as "waiting", so a synchronous finishLoading throws an
+            // uncatchable NSInternalInconsistencyException (1.8(15) SIGABRT on stv.hls.loader).
+            if url.host == "key", url.path.isEmpty {
+                // Local fast path: stvkey://key — serve the key resolve() already fetched.
+                queue.async { [weak self] in
+                    guard let self else { return }
+                    self.finishKey(req, id: id, keyData: Bytes.fromHex(self.keyHex).map { Data($0) })
+                }
+            } else {
+                // -19152 fix: fetch the real key ourselves, with the FULL set of headers, by
+                // restoring the original scheme (host/path/query were kept by rewrite).
+                guard var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+                c.scheme = scheme.hasSuffix("-http") ? "http" : "https"
+                guard let real = c.url else { return false }
+                var r = URLRequest(url: real, timeoutInterval: 15)
+                for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
+                let task = session.dataTask(with: r) { [weak self] data, resp, err in
+                    self?.queue.async { [weak self] in
+                        self?.completeKey(req, id: id, data: data, resp: resp, err: err)
+                    }
+                }
+                tasks[id] = task
+                task.resume()
+            }
             return true
         }
         guard scheme.hasPrefix(Self.plScheme), var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
@@ -83,43 +106,64 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
         tasks.removeValue(forKey: id)?.cancel()
     }
 
-    // MARK: - Completion (always on `queue`)
+    // MARK: - Key completion (always on `queue`)
 
-    private func finishKey(_ req: AVAssetResourceLoadingRequest, id: ObjectIdentifier) {
+    /// Remote key fetch landed. Validate the bytes, then hand off to the single finishKey exit.
+    private func completeKey(_ req: AVAssetResourceLoadingRequest, id: ObjectIdentifier,
+                             data: Data?, resp: URLResponse?, err: Error?) {
+        tasks.removeValue(forKey: id)
+        var kd: Data?
+        if err == nil,
+           (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false,
+           let d = data {
+            kd = Self.keyBytes(d)
+        }
+        if kd == nil {
+            NSLog("%@", "[STV] hls-key fail status=\((resp as? HTTPURLResponse)?.statusCode ?? -1) bytes=\(data?.count ?? 0) err=\(err.map { "\($0)" } ?? "-")")
+        }
+        finishKey(req, id: id, keyData: kd)
+    }
+
+    /// The ONE exit for every AVAssetResourceLoadingRequest we owe a key to.
+    /// The setup/respond calls may throw an ObjC exception (guarded); finishLoading MUST run even
+    /// then, otherwise AVFoundation waits forever for the key -> -19152. So finish sits OUTSIDE
+    /// the guarded block and is unconditional.
+    private func finishKey(_ req: AVAssetResourceLoadingRequest, id: ObjectIdentifier, keyData: Data?) {
         guard claim(req, id: id) else { return }
-        // AVFCore 抛的是 Objective-C 异常，Swift 无法 catch；一旦逃逸出这个 dispatch block
-        // 就是 std::terminate -> SIGABRT。整段走 ObjC @try/@catch 兜底。
+        var ok = false
         STVAVLoadingGuard.guarded {
-            guard let key = Bytes.fromHex(self.keyHex), key.count == 16 else {
-                self.finish(req, with: URLError(.userAuthenticationRequired))
-                return
-            }
+            guard let key = keyData, key.count == 16 else { return }
             req.contentInformationRequest?.contentType = "public.data"
             req.contentInformationRequest?.contentLength = 16
             req.contentInformationRequest?.isByteRangeAccessSupported = false
-            req.dataRequest?.respond(with: Data(key))
-            self.finish(req, with: nil)
+            req.dataRequest?.respond(with: key)
+            ok = true
         }
+        self.finish(req, with: ok ? nil : URLError(.userAuthenticationRequired))
     }
+
+    // MARK: - Playlist completion (always on `queue`)
 
     private func complete(_ req: AVAssetResourceLoadingRequest, id: ObjectIdentifier,
                           data: Data?, resp: URLResponse?, err: Error?, real: URL) {
         tasks.removeValue(forKey: id)
         guard claim(req, id: id) else { return }
-        // 同 finishKey：所有 respond / finishLoading 都在 ObjC @try/@catch 内。
+        var ok = false
         STVAVLoadingGuard.guarded {
             guard let data, err == nil,
                   (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false else {
                 NSLog("%@", "[STV] hls-fail status=\((resp as? HTTPURLResponse)?.statusCode ?? -1) host=\(real.host ?? "?") path=\(real.path.prefix(70)) ct=\(resp?.mimeType ?? "-") err=\(err.map { "\($0)" } ?? "-")")
-                self.finish(req, with: err ?? URLError(.badServerResponse))
                 return
             }
             let text = self.rewrite(HLSAdFilter.apply(String(decoding: data, as: UTF8.self), base: real), base: real)
             req.contentInformationRequest?.contentType = "public.m3u-playlist"
             req.contentInformationRequest?.contentLength = Int64(text.utf8.count)
             req.dataRequest?.respond(with: Data(text.utf8))
-            self.finish(req, with: nil)
+            ok = true
         }
+        // Same as finishKey: unconditional finish (in ObjC frame) so a swallowed setup exception
+        // can never leave the request hanging.
+        self.finish(req, with: ok ? nil : (err ?? URLError(.badServerResponse)))
     }
 
     /// Atomically take ownership of the right to finish. AVFoundation itself may have already
@@ -130,14 +174,28 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
     }
 
     /// The single exit that touches AVFoundation's finishLoading. No other call site exists.
-    /// 真正的 finishLoading 调用下沉到 Objective-C 帧（STVAVLoadingGuard.finish），
-    /// 在纯 ObjC 栈内 @try/@catch 兜住 NSInternalInconsistencyException —— Swift 无法
-    /// 捕获 ObjC 异常，一旦逃逸出 dispatch block 就是 std::terminate -> SIGABRT。
+    /// The real finishLoading call lives in the Objective-C frame (STVAVLoadingGuard.finish), so
+    /// any NSInternalInconsistencyException is thrown AND caught without unwinding a Swift frame.
     private func finish(_ req: AVAssetResourceLoadingRequest, with error: Error?) {
         STVAVLoadingGuard.finish(req, error: error.map { $0 as NSError })
     }
 
-    /// Absolutize URIs; nested playlists go back through the loader, keys go to the local key scheme.
+    // MARK: - Key helpers
+
+    /// A 16-byte AES key from a fetch response: raw 16 bytes, 32-char hex text, or 16 bytes
+    /// followed by nothing but whitespace. Anything else is not a usable key.
+    private static func keyBytes(_ d: Data) -> Data? {
+        if d.count == 16 { return d }
+        if let s = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           s.count == 32, let b = Bytes.fromHex(s), b.count == 16 { return Data(b) }
+        if d.count > 16,
+           String(decoding: d[16...], as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return Data(d.prefix(16))
+        }
+        return nil
+    }
+
+    /// Absolutize URIs; nested playlists go back through the loader, keys go to our key scheme.
     private func rewrite(_ pl: String, base: URL) -> String {
         func abs(_ s: String) -> URL? { URL(string: s, relativeTo: base)?.absoluteURL }
         func via(_ u: URL, _ scheme: String) -> String {
@@ -154,14 +212,19 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
                 guard let m = HTML.groups("URI\\s*=\\s*\"([^\"]+)\"", line), let u = abs(m[1]) else { return line }
                 let repl: String
                 if isKey {
-                    // 只有确实解析出合法 16 字节 AES key 才改写成本地 stvkey://。
-                    // 黄果换线路后 key URI 常返回非密钥内容（HTML/空串/长度不对），
-                    // 旧逻辑只要 keyHex 非空就改写，随后 finishKey 里 Bytes.fromHex 失败，
-                    // 走 error 分支调用 finishLoadingWithError: —— 正是 1.8(15) 真机
-                    // SIGABRT 的栈顶。保留原始 URI 时 AVURLAsset 已带 Referer/UA，
-                    // 让 AVFoundation 自行取 key，最坏只是该集播不出，绝不会杀进程。
+                    // 1.8 left a bare https URI when keyHex was empty  -> AVFoundation fetched it
+                    //     without our headers -> -19152 "encryption key timeout" (真机 2026-11-13).
+                    // 1.9 only rewrote to stvkey://key when keyHex was valid, else kept the bare
+                    //     https URI -> same timeout. Both let AVFoundation fetch a key it cannot
+                    //     authenticate. Now EVERY key goes through OUR loader, which attaches the
+                    //     full header set: keep the original host/path/query, just swap the scheme.
                     let valid = (Bytes.fromHex(self.keyHex)?.count ?? 0) == 16
-                    repl = valid ? Self.keyScheme + "://key" : u.absoluteString
+                    if valid {
+                        repl = Self.keyScheme + "://key"                       // local fast path
+                    } else {
+                        let ks = u.scheme == "http" ? Self.keyScheme + "-http" : Self.keyScheme
+                        repl = via(u, ks)                                     // self-fetched with headers
+                    }
                 }
                 else if line.uppercased().hasPrefix("#EXT-X-MEDIA") { repl = via(u, Self.plScheme) }
                 else { repl = u.absoluteString }
