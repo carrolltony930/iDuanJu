@@ -1,33 +1,24 @@
 import SwiftUI
 import UIKit
 
-/// 窗口 / 触摸自愈守卫。
+/// 窗口 / 触摸自愈守卫（只做**不会改变画面**的修复）。
 ///
-/// 用户反复遇到的现象是同一个：**画面还在动（首页轮播阴影继续变），但点哪里都没反应**。
-/// 主线程没死锁，动画就会继续跑；所以问题只能是「触摸没有落到业务视图上」。能造成这件事的
-/// 只有四类东西，这里逐条兜住，不管它是由哪个版本、哪条路径留下的：
+/// 2.9 的首版在这里踩了坑：把 `hitTest` 返回的东西当成「遮罩层」隐藏掉，而它返回的
+/// 可能就是 **UIWindow 自己** —— 窗口一隐藏就是全黑、状态栏还在、点哪都没反应。
+/// 用户日志里那行 `[ui] 遮罩层 UIWindow 正在吃触摸，已隐藏` 就是现场。
 ///
-/// 1. 窗口最上层多了一个**空但可交互**的视图（转场容器 / presentation 容器 / 野视图）。
-///    这种视图看不见内容，只接管 hitTest —— 画面完全正常，触摸全被吃掉。
-/// 2. `rootViewController.view` 被改成了 hidden / 不可交互 / alpha=0。
-/// 3. 窗口尺寸与 `UIWindowScene` 不一致（旋转事务被打断后的典型残留）。
-///    画面看起来没变，但触摸坐标系错位 —— 点在视觉按钮上，落点在窗口之外，一样是「点不动」。
-///    用户描述的「底部菜单上方一小块黑屏」正是尺寸/安全区算错的产物。
-/// 4. 中心点 `hitTest` 返回 nil（整块区域没有可接收触摸的视图）。
+/// `hitTest` 返回 window 自己（或返回 nil）真正说明的是：**那一刻根视图不在窗口的正常位置上**，
+/// 触摸点落在了 root view 之外。所以正确的修复不是「隐藏谁」，而是**把根视图摆回窗口大小**。
 ///
-/// 检测方式刻意选了 **hitTest 实测**而不是猜类名：正常运行时命中的一定是业务视图（在
-/// `root.view` 子树里），一旦命中的不是，那就是遮罩层，不需要知道它到底叫什么。
-///
-/// 保护条件（防止误伤）：
-/// - 播放器在屏上时完全不介入（它有自己的一整套全屏手势）；
-/// - 有 modal / sheet / alert 时跳过（它们的视图本来就不在 root 子树里）；
-/// - 只处理「没有动画在跑」的视图，正在转场的绝不动。
-///
-/// 频率 1 秒一次，单次成本是一次递归 hitTest，可以忽略。真出问题时用户最多卡 1 秒就自动恢复，
-/// 不会再到「必须杀进程」的程度。
+/// 现在的规则很简单：只做三件事，且都不碰画面内容。
+/// 1. 根视图被隐藏 / 被禁用 → 复位这两个开关；
+/// 2. 根视图 frame 与窗口 bounds 不一致 → 摆回去并重排；
+/// 3. 其余只写日志（限流 3 秒一条），诊断用。
+/// 绝不再修改 `window.frame`，绝不隐藏除「已失效的转场容器」以外的任何视图。
 @MainActor
 enum WindowGuard {
     private static var timer: Timer?
+    private static var lastLog = Date.distantPast
 
     static func start() {
         guard timer == nil else { return }
@@ -39,63 +30,67 @@ enum WindowGuard {
         timer = t
     }
 
+    /// 播放器关闭后强制主窗口重排一次，确保根视图回到窗口大小。
+    /// 只碰 frame 与布局，不碰任何内容。
+    static func relayout() {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first,
+              let win = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first else { return }
+        win.setNeedsLayout()
+        win.layoutIfNeeded()
+        if let rv = win.rootViewController?.view,
+           abs(rv.frame.width - win.bounds.width) > 1 || abs(rv.frame.height - win.bounds.height) > 1 {
+            STVLog.w("[ui] relayout after close root=\(rect(rv.frame)) win=\(rect(win.bounds))")
+            rv.frame = win.bounds
+            rv.setNeedsLayout()
+        }
+    }
+
     private static func tick() {
         guard PlayerPresenter.shared.route == nil else { return }
         guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first,
               let win = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first,
               let root = win.rootViewController else { return }
-        // 有**真正呈现在屏幕上**的 modal / sheet / alert 时不动：它们的容器同样不在
-        // root 子树里，但那是正常的。反过来，如果 modal 已经不在窗口上却还挂在
-        // presentedViewController 上（iOS 17 的另一种残留），这里不跳过，交给下面的检查清理。
         if let p = root.presentedViewController {
             if p.isBeingPresented || p.isBeingDismissed || p.viewIfLoaded?.window != nil { return }
         }
-
         let rv = root.view!
 
-        // —— 3. 窗口尺寸错位 ——
-        let expect = scene.coordinateSpace.bounds.size
-        if expect.width > 1, win.bounds.size != expect {
-            STVLog.w("[ui] 窗口尺寸错位 \(fmt(win.bounds.size)) → \(fmt(expect))，已复位")
-            win.frame = CGRect(origin: .zero, size: expect)
-        }
-
-        // —— 2. 根视图状态异常 ——
-        if rv.isHidden || !rv.isUserInteractionEnabled || rv.alpha < 0.01 {
-            STVLog.w("[ui] 根视图异常 hidden=\(rv.isHidden) user=\(rv.isUserInteractionEnabled) alpha=\(rv.alpha)，已复位")
+        // 1. 根视图的开关被改坏
+        if rv.isHidden || !rv.isUserInteractionEnabled {
+            STVLog.w("[ui] root disabled hidden=\(rv.isHidden) user=\(rv.isUserInteractionEnabled) -> restore")
             rv.isHidden = false
             rv.isUserInteractionEnabled = true
-            rv.alpha = 1
         }
 
-        // —— 1 / 4. 命中测试 ——
-        let p = CGPoint(x: win.bounds.midX, y: win.bounds.midY)
-        guard let hit = win.hitTest(p, with: nil) else {
-            STVLog.w("[ui] 中心 hitTest 为空：清理窗口上层")
-            rv.isHidden = false
-            rv.isUserInteractionEnabled = true
-            for v in win.subviews where v !== rv { neutralize(v) }
-            return
+        // 2. 根视图没有铺满窗口 —— 这是「点哪都没反应」的直接原因
+        let wb = win.bounds
+        let rb = rv.frame
+        if abs(rb.minX) > 1 || abs(rb.minY) > 1 || abs(rb.width - wb.width) > 1 || abs(rb.height - wb.height) > 1 {
+            STVLog.w("[ui] root frame \(rect(rb)) != win \(rect(wb)) -> relayout")
+            rv.frame = wb
+            rv.setNeedsLayout()
+            win.layoutIfNeeded()
         }
-        if hit === rv || hit.isDescendant(of: rv) { return }
 
-        // 命中的不是业务界面 —— 顺着 superview 找到挂在窗口上的那一层。
-        var top = hit
-        while let s = top.superview, s !== win { top = s }
-        if top === rv { return }
-        STVLog.w("[ui] 遮罩层 \(type(of: top)) 正在吃触摸，已隐藏")
-        neutralize(top)
+        // 3. 只诊断，不动作：命中测试拿不到内容，说明几何仍不对
+        let hit = win.hitTest(CGPoint(x: wb.midX, y: wb.midY), with: nil)
+        if hit == nil || hit === win {
+            if Date().timeIntervalSince(lastLog) > 3 {
+                lastLog = Date()
+                STVLog.w("[ui] hitTest \(hit == nil ? "nil" : "window") win=\(rect(wb)) root=\(rect(rv.frame)) scene=\(rect(scene.coordinateSpace.bounds)) masked=\(rv.layer.mask != nil)")
+            }
+        }
+        // 兜底：失效的转场容器仍然要摘掉（只认这一类，且没有动画在跑）
+        for v in win.subviews where v !== rv {
+            let n = String(describing: type(of: v))
+            guard n.contains("TransitionView"), v.layer.animationKeys() == nil else { continue }
+            v.isUserInteractionEnabled = false
+            v.isHidden = true
+            STVLog.w("[ui] dropped stale \(n)")
+        }
     }
 
-    /// 只关掉交互并隐藏，**不 removeFromSuperview** —— 删视图容易让 UIKit 内部状态错乱，
-    /// 而 hidden 的视图连 hitTest 都不参加，效果一样且可逆。
-    private static func neutralize(_ v: UIView) {
-        guard v.layer.animationKeys() == nil else { return }
-        v.isUserInteractionEnabled = false
-        v.isHidden = true
-    }
-
-    private static func fmt(_ s: CGSize) -> String {
-        String(format: "%.0fx%.0f", s.width, s.height)
+    private static func rect(_ r: CGRect) -> String {
+        String(format: "%.0f,%.0f %.0fx%.0f", r.minX, r.minY, r.width, r.height)
     }
 }

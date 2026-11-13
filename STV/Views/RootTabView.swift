@@ -80,6 +80,9 @@ struct RootTabView: View {
         // 清两次：UIKit 有时候是在关闭之后的下一个动画周期才把那个空容器挂到窗口上的。
         .onChange(of: player.route) { _, v in
             guard v == nil else { return }
+            // 播放器撤掉后立刻让主窗口重排一次：插入/移除全屏视图会改安全区，极快的
+            // 进出可能让根视图停在一个错误的 frame 上 —— 表现为「画面正常但点哪都没反应」。
+            DispatchQueue.main.async { MainActor.assumeIsolated { WindowGuard.relayout() } }
             for d in [0.5, 1.6] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + d) {
                     MainActor.assumeIsolated { NavBarHealer.releaseStuckTransitionLayers() }

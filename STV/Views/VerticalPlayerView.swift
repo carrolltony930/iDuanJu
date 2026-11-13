@@ -256,18 +256,22 @@ struct PlayerScreen: View {
             co.start()
             if co.current == nil { await load() }
         }
-        // 方向解锁必须挂在 `.task` 本身上。
+        // 方向：**不再解锁**，反而把竖屏钉死。
         //
-        // 原来这里写的是 `Task { @MainActor in ... }` —— 那是**非结构化**任务，不继承
-        // `.task` 的取消。播放器在 0.6 秒内被关掉时，这个内部任务照样会跑完并调用
-        // `OrientationGate.unlock()`，在一个已经消失的页面上请求重算方向。反过来如果
-        // 改用 `.task`，视图一消失 `Task.sleep` 就抛 CancellationError，解锁直接跳过。
+        // 之前这里是 `unlock()`（允许四个方向），本意是让用户转手机就能横过来。代价是：
+        // 播放器在屏期间设备只要有一点倾斜，系统就会自己发起一次旋转；这次旋转如果恰好
+        // 撞上「播放器插入/移除」或「返回」，窗口就会停在中间尺寸 —— 画面看着正常，但
+        // 根视图已经不在窗口位置上了，于是点哪都没反应。用户日志里 `hitTest` 返回 window
+        // 自己，就是这一刻。
         //
-        // 0.6 秒这个延迟本身也是必须的：`setNeedsUpdateOfSupportedInterfaceOrientations()`
-        // 会打断正在进行的转场，等它结束再解锁。
+        // 横屏现在只由「横屏」按钮主动触发（enterLandscape 会自己 requestGeometryUpdate），
+        // 不需要常驻解锁。这样播放期间不存在任何「意料之外的方向事务」。
+        //
+        // 延迟 600ms 仍然保留：`setNeedsUpdateOfSupportedInterfaceOrientations()` 会打断
+        // 正在进行的转场。挂在 `.task` 上，视图一消失就自动取消。
         .task {
             do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
-            OrientationGate.unlock()
+            OrientationGate.lockPortrait()
         }
         .task { await screenshotHooks() }
         .task(id: lastInteraction) {

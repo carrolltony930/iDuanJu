@@ -45,6 +45,7 @@ final class PlayerPresenter: ObservableObject {
     private init() {}
 
     func present(_ series: HGSeries, at index: Int? = nil) {
+        STVLog.w("[ui] present player")
         route = PlayerRoute(series: series, startIndex: index)
     }
 
@@ -56,13 +57,15 @@ final class PlayerPresenter: ObservableObject {
     /// 仍会让 UIKit 做一次布局与安全区重算；紧接着又反向撤掉，就可能留下一个已经无效、
     /// 却仍参与命中测试的层。
     ///
-    /// 所以这里做一道时间隔离：呈现之后不足 260ms 就要求关闭时，等满 260ms 再真正移除。
-    /// 260ms 比一次系统 dismiss 动画（约 350ms）还短，手感上就是「点了之后播放器收起」，
-    /// 正常使用（看了一会儿才退）完全不受影响，延迟为 0。
+    /// 所以这里做一道时间隔离：呈现之后不足 500ms 就要求关闭时，等满 500ms 再真正移除。
+    /// 2.9 用 260ms 仍被击穿，说明插入全屏视图（含状态栏 / 系统覆盖层切换）的完整事务
+    /// 比 260ms 长。500ms 比一次系统 dismiss 动画更宽裕，正常使用（看了一会儿才退）延迟为 0。
     func dismiss() {
         guard let r = route else { return }
-        let wait = 0.26 - Date().timeIntervalSince(r.shownAt)
+        let elapsed = Date().timeIntervalSince(r.shownAt)
+        let wait = 0.5 - elapsed
         guard wait > 0 else { route = nil; return }
+        STVLog.w(String(format: "[ui] dismiss delayed %.0fms (elapsed %.0fms)", wait * 1000, elapsed * 1000))
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
             guard let self, self.route?.id == r.id else { return }
             self.route = nil
