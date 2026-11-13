@@ -244,9 +244,15 @@ struct PlayerScreen: View {
         .persistentSystemOverlays(.hidden)
         .animation(.easeOut(duration: 0.18), value: panel)
         .task {
-            // Portrait by default for everything (landscape videos play centred). Rotating the phone (when
-            // the system rotation lock is off) or the 横屏 button switches to landscape.
-            OrientationGate.unlock()
+            // 不要在 push 转场的这一帧里解锁方向：setNeedsUpdateOfSupportedInterfaceOrientations()
+            // 会打断正在进行的导航转场，UIKit 把 push 回滚成「导航栏出来了但内容不切」，
+            // 并在窗口顶层留下一个拦截触摸的转场层 —— 就是「点视频没进去、只剩左上角 Back、
+            // 点哪都没反应」的根因。等转场结束（0.6s）再解锁，用户此时也还没横屏。
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(600))
+                guard !Task.isCancelled else { return }
+                OrientationGate.unlock()
+            }
             co.start()
             if co.current == nil { await load() }
         }
@@ -266,7 +272,8 @@ struct PlayerScreen: View {
         .alert("画中画暂不可用", isPresented: Binding(get: { co.pipError != nil }, set: { if !$0 { co.pipError = nil } })) {
             Button("好") { co.pipError = nil }
         } message: { Text(co.pipError ?? "") }
-        .onAppear { OrientationGate.unlock(); SpeedHaptics.prepare() }
+        // 这里也绝不能 unlock（会和上面的 .task 一起，在转场里第二次打断导航）。
+        .onAppear { SpeedHaptics.prepare() }
         .onDisappear {
             // iOS 17：视图正在 pop 时同步改 @State/Observable 属性会触发 SwiftUI 崩溃。
             // 延后到下一个 main runloop，等视图树拆完再停播放器、恢复亮度。

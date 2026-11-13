@@ -160,6 +160,11 @@ struct HomeView: View {
         .onChange(of: sources) { _, list in
             if !list.contains(source), let first = list.first { source = first }
         }
+        // 首次进入就要兜一次：如果用户在设置里把红果删了，init 里的默认值已经不在列表里，
+        // 只靠 onChange 不会触发（sources 没有变化），首页会是一片空白。
+        .onAppear {
+            if !sources.contains(source), let first = sources.first { source = first }
+        }
     }
 
     // MARK: Header (search + filter, source bar)
@@ -246,26 +251,8 @@ struct HomeView: View {
                                 .transition(.opacity)
                         }
                     }
-                    // 子频道：只画当前站源的那一排。旧版按站源逐个分组，名字跟上面的 3 列格子重复，
-                    // 而且只有一路子频道的站点（Jable 等）会重复显示同一个名字。
-                    if source.subs.count > 1 {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("子频道").font(.subheadline.weight(.semibold)).foregroundStyle(STVTheme.secondary)
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                                ForEach(source.subs, id: \.self) { t in
-                                    let on = (subs[source] ?? source.subs[0]) == t
-                                    Button { subs[source] = t; showChannels = false } label: {
-                                        Text(t.subLabel).font(.subheadline.weight(on ? .semibold : .regular))
-                                            .foregroundStyle(on ? STVTheme.accent : STVTheme.text)
-                                            .lineLimit(1).minimumScaleFactor(0.7)
-                                            .frame(maxWidth: .infinity).frame(height: 40)
-                                            .background(on ? STVTheme.accent.opacity(0.14) : STVTheme.glass,
-                                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    }.buttonStyle(.plain).accessibilityIdentifier("panel.\(source.label).\(t.subLabel)")
-                                }
-                            }
-                        }
-                    }
+                    // 频道面板里不再画「子频道」：首页每个站源自己的分类条（subChips）已经够用，
+                    // 这里再列一排只是把同一个分类重复一次。子频道状态 subs 保留，供首页绑定。
                     if !SourceOrder.shared.hidden.isEmpty {
                         Button {
                             withAnimation(.snappy(duration: 0.22)) {

@@ -32,6 +32,34 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
         self.keyHex = keyHex
     }
 
+    // MARK: - Playlist seed（省一次完整往返）
+
+    /// resolve() 为了判断加密/时长已经拉过 master 和子 playlist。AVFoundation 起播时会用
+    /// resourceLoader 再拉一次同样的 URL —— 代理环境下每次往返 1–2 秒，用户感知很明显。
+    /// 这里按真实 URL 存 60 秒原文，命中就直接交给 complete() 做改写，网络请求整个跳过。
+    private final class SeedStore: @unchecked Sendable {
+        static let shared = SeedStore()
+        private let lock = NSLock()
+        private var map: [String: (Date, String)] = [:]
+
+        func put(_ url: String, _ text: String) {
+            lock.lock(); defer { lock.unlock() }
+            let now = Date()
+            map = map.filter { now.timeIntervalSince($0.value.0) < 60 }
+            map[url] = (now, text)
+            if map.count > 24 { map.removeAll() }
+        }
+
+        func get(_ url: String) -> String? {
+            lock.lock(); defer { lock.unlock() }
+            guard let (t, s) = map[url], Date().timeIntervalSince(t) < 60 else { return nil }
+            return s
+        }
+    }
+
+    /// resolve() 拉到原文后写入；HLSPlayback 起播时命中就省一个往返。
+    static func seed(_ url: String, _ text: String) { SeedStore.shared.put(url, text) }
+
     func makeAsset(url: String) -> AVURLAsset? {
         guard var c = URLComponents(string: url) else { return nil }
         let isHLS = url.lowercased().contains(".m3u8") || url.contains("/m3u8/")
@@ -69,7 +97,7 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
                 guard var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
                 c.scheme = scheme.hasSuffix("-http") ? "http" : "https"
                 guard let real = c.url else { return false }
-                var r = URLRequest(url: real, timeoutInterval: 15)
+                var r = URLRequest(url: real, timeoutInterval: 10)
                 for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
                 let task = session.dataTask(with: r) { [weak self] data, resp, err in
                     self?.queue.async { [weak self] in
@@ -84,11 +112,21 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
         guard scheme.hasPrefix(Self.plScheme), var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
         c.scheme = scheme.hasSuffix("-http") ? "http" : "https"
         guard let real = c.url else { return false }
-        var r = URLRequest(url: real)
-        for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
-
         let id = ObjectIdentifier(req)
         pending.insert(id)
+        // 命中 resolve() 留下的原文：不发起网络请求，直接走同一个 complete()（改写/去广告都在里面）。
+        if let cached = Self.SeedStore.shared.get(real.absoluteString) {
+            let resp = HTTPURLResponse(url: real, statusCode: 200, httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": "application/vnd.apple.mpegurl"])
+            STVLog.w("hls-pl seed hit \(cached.utf8.count)B host=\(real.host ?? "?")")
+            queue.async { [weak self] in
+                self?.complete(req, id: id, data: Data(cached.utf8), resp: resp, err: nil, real: real)
+            }
+            return true
+        }
+        var r = URLRequest(url: real, timeoutInterval: 10)
+        for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
+
         let task = session.dataTask(with: r) { [weak self] data, resp, err in
             // Jump back onto the delegate queue: didCancel and this callback are then serialised,
             // so a request cancelled by teardown is never finished afterwards.

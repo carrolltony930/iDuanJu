@@ -18,6 +18,15 @@ struct SourcesView: View {
                 } else {
                     group("内置") {
                         builtinRow(.hongguo, "play.rectangle.on.rectangle")
+                        Divider().padding(.leading, 48)
+                        NavigationLink { SourceManageView() } label: {
+                            HStack {
+                                label("站源管理", "arrow.up.arrow.down.circle", sub: "排序 / 删除首页显示的内置源与站点源，包括红果；删除只是隐藏，可随时恢复")
+                                Spacer(); chevron
+                            }.padding(14)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("sources.manage")
                     }
                     group("18+ 片源（默认隐藏）") {
                         Toggle(isOn: Binding(get: { gate.huangguo }, set: { gate.setHuangguo($0) })) {

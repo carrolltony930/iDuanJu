@@ -40,11 +40,17 @@ targets:
       # 真实结果，用于定位 -19152 到底卡在 403、超时还是没发请求。
       # 2.4(21)：AES key 改由 loopback http 提供（/k/<hex>），不再用自定义 scheme —— iOS 17
       # 对 stvkey:// 作 key URI 根本不发请求，必落 -19152。保留全部诊断日志。
-      # 2.5(22)：黄果视频站首次起播 20–30 秒 → 4 个清晰度的子 playlist/key 改并发拉取；
-      # 播放器加载中不再画中心按钮（之前压在「正在载入分集」上）；返回键防连点 + 旋转请求
-      # 延后到 pop 动画之后，修「左上角返回卡死」。
-      MARKETING_VERSION: "2.5"
-      CURRENT_PROJECT_VERSION: "22"
+      # 2.6(23)：
+      # 1) 「点视频没进去、只剩左上角 Back、点哪都没反应」——根因是播放器在 push 转场那一帧
+      #    调 setNeedsUpdateOfSupportedInterfaceOrientations()（OrientationGate.unlock），把导航
+      #    转场打断。改为转场结束 0.6s 后再解锁，并加 NavBarHealer 兜底纠正残留的导航栏。
+      # 2) 起播提速：playlist 请求补 10s 超时（原来默认 60s，一个挂住的请求就能拖 20–30 秒）；
+      #    解析只取前 2 档清晰度；resolve 拉过的 playlist 原文喂给 resourceLoader，省一次往返；
+      #    直连 HLS 关掉「缓冲堆满才开画面」。
+      # 3) 设置 → 站源管理：内置源（含红果）与站点源可拖动排序、左滑删除、单个恢复/全部恢复。
+      # 4) 频道面板去掉「子频道」一排（首页各源自己的分类条保留）。
+      MARKETING_VERSION: "2.6"
+      CURRENT_PROJECT_VERSION: "23"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h

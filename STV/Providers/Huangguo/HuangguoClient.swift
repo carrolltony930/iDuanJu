@@ -73,7 +73,7 @@ actor HuangguoClient {
     /// from concurrent tasks. Needed because one episode resolves up to 4 variants in parallel.
     private nonisolated func fetch(_ url: String, referer: String, headers: [String: String] = [:]) async throws -> Data {
         guard let u = URL(string: url) else { throw ProviderError.invalid("bad url") }
-        var r = URLRequest(url: u)
+        var r = URLRequest(url: u, timeoutInterval: 8)
         r.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         r.setValue(referer, forHTTPHeaderField: "Referer")
         r.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
@@ -401,6 +401,7 @@ actor HuangguoClient {
             return HGResolvedVideo(vid: episode.vid, url: media, key: nil, duration: nil, expiresAt: nil, err: nil, streams: [s])
         }
         let master = String(decoding: try await fetch(media, referer: referer, headers: headers), as: UTF8.self)
+        if !master.isEmpty { HLSPlayback.seed(media, master) }
         var targets: [(String, HLSPlaylist.Variant?)] = [(media, nil)]
         let vars = HLSPlaylist.variants(master, media)
         if !vars.isEmpty { targets = vars.map { ($0.url, $0) } }
@@ -409,14 +410,19 @@ actor HuangguoClient {
         // 之前这里是串行 for 循环：4 个清晰度 × (子 playlist + key) = 最多 8 个 HTTP 往返排队，
         // 真机上就是「点开先转圈 20–30 秒」。App 源只有一路 m3u8，2 个往返，所以几乎秒开。
         // 改成并发后总耗时 ≈ 最慢的那一个往返；fetch 是 nonisolated 纯网络，没有共享状态。
+        // 只解析前 2 个清晰度：真机上 4 路并发会被代理按 host 限速，反而比 2 路慢；
+        // 短视频站本来也用不到 4 档。剩下的一档由播放器按带宽自适应。
         let batch: [(Int, String, HLSPlaylist.Variant?)] =
-            Array(targets.prefix(4).enumerated()).map { ($0.offset, $0.element.0, $0.element.1) }
+            Array(targets.prefix(2).enumerated()).map { ($0.offset, $0.element.0, $0.element.1) }
         var resolved: [Int: HGStream] = [:]
         var dur: Double = 0
         await withTaskGroup(of: (Int, HGStream, Double).self) { group in
             for (i, u, v) in batch {
                 group.addTask { [master, referer, headers, keyFetchHeaders] in
                     let pl = v == nil ? master : String(decoding: (try? await self.fetch(u, referer: referer, headers: headers)) ?? Data(), as: UTF8.self)
+                    // 起播时 AVFoundation 会用 resourceLoader 再拉一次同一个 URL；把原文交给它，
+                    // 能省掉一次完整往返（代理环境 1–2 秒）。
+                    if !pl.isEmpty { HLSPlayback.seed(u, pl) }
                     let k = HLSPlaylist.keys(pl, u)
                     var keyHex = ""
                     if k.encrypted, !k.uri.isEmpty, let d = try? await self.fetch(k.uri, referer: referer, headers: keyFetchHeaders) {

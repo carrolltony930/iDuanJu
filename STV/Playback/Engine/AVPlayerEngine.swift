@@ -46,6 +46,12 @@ import UIKit
         let gen = generation
         statusObservation = nil
         guard let item = PlaybackCoordinator.makeItem(src) else { throw URLError(.badURL) }
+        // 直连 HLS（黄果视频站、长视频站）不要等 AVFoundation 把缓冲堆满才开画面：
+        // 默认策略会先囤几秒再播，代理环境下就是「转圈 20 秒」。预缓冲/本地代理路径不受影响。
+        if case .stream = src {
+            item.automaticallyWaitsToMinimizeStalling = false
+            item.preferredForwardBufferDuration = 2
+        }
         audioGroup = nil; legibleGroup = nil; audioTracks = []; subtitleTracks = []; selectedAudio = nil; selectedSubtitle = nil
         player.replaceCurrentItem(with: item)
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in

@@ -16,19 +16,35 @@ struct RootTabView: View {
         }
         .tint(STVTheme.accent)
         .overlay(alignment: .bottom) {
-            if paths[tab].isEmpty {
-                GlassTabBar(selection: $tab, items: Self.items) { i in
-                    if i == tab { paths[i] = NavigationPath() }
+            // 动画只能加在 overlay 自己的容器里。之前挂在整个 TabView 上，
+            // 每次 push（path 由空变非空）都会连带 NavigationStack 的转场一起做隐式动画，
+            // iOS 17 上两个事务撞在一起会让 push 卡在「导航栏已出、内容没换」的中间态。
+            ZStack {
+                if paths[tab].isEmpty {
+                    GlassTabBar(selection: $tab, items: Self.items) { i in
+                        if i == tab { paths[i] = NavigationPath() }
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: paths[tab].isEmpty)
+            .allowsHitTesting(paths[tab].isEmpty)
         }
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: paths[tab].isEmpty)
         .onAppear {
             Router.handler = { r in paths[tab].append(r) }
+            // 回到根页面后纠正一次导航栏：转场被打断时 UIKit 会把 Back 留在首页左上角。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
             #if DEBUG
             if ProcessInfo.processInfo.environment["STV_TD_OPEN"] == "1" { Router.push(.tdlib) }
             #endif
+        }
+        // pop 回根页面、或切 tab 到根页面之后，再纠正一次。
+        .onChange(of: paths[tab].isEmpty) { _, empty in
+            guard empty else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
+        }
+        .onChange(of: tab) { _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
         }
         // Cold start: restore a saved TDLib login (no network login, nothing is sent).
         .task { await TDLibService.shared.bootstrap() }
