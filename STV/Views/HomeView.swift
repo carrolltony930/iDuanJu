@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum HomeTab: Hashable {
     case hongguo(HGRankGenre)
@@ -106,6 +107,12 @@ struct HomeView: View {
     private var onPoster: Bool { heroCovers[source] != nil }
     private var headerInk: Color { onPoster ? .white : STVTheme.text }
     @State private var showChannels = false
+    /// 频道面板自己的副本：拖动时先在这里重排，松手才写进 SourceOrder，避免中途闪烁。
+    @State private var panelItems: [HomeSource] = []
+    @State private var editingSources = false
+    @State private var draggingSource: HomeSource?
+    /// 自定义顺序 / 隐藏之后真正展示的站源。
+    private var sources: [HomeSource] { SourceOrder.shared.arrange(HomeSource.all) }
 
     init() {
         let e = ProcessInfo.processInfo.environment["STV_HOME_TAB"] ?? ""
@@ -127,7 +134,7 @@ struct HomeView: View {
         VStack(spacing: 0) {
             header
             TabView(selection: $source) {
-                ForEach(HomeSource.all) { s in
+                ForEach(sources) { s in
                     if s == .channels {
                         ChannelFeedView(embedded: true).tag(s)
                     } else if s == .manga {
@@ -149,6 +156,10 @@ struct HomeView: View {
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showChannels) { channelPanel }
         .onChange(of: SourceGate.shared.visibleSites) { _, _ in if !HomeSource.all.contains(source) { source = .hongguo } }
+        // 站源被移除后 selection 会指向一个不存在的 tag，TabView 会空白，这里兜到第一个可见源。
+        .onChange(of: sources) { _, list in
+            if !list.contains(source), let first = list.first { source = first }
+        }
     }
 
     // MARK: Header (search + filter, source bar)
@@ -177,7 +188,7 @@ struct HomeView: View {
             .background(.ultraThinMaterial.opacity(0.6), in: Capsule())
             .overlay { Capsule().strokeBorder(headerInk.opacity(0.14), lineWidth: 1) }
             .padding(.horizontal, 16)
-            HomeChannelBar(items: HomeSource.all, selection: $source, label: \.label, ink: headerInk) { showChannels = true }
+            HomeChannelBar(items: sources, selection: $source, label: \.label, ink: headerInk) { showChannels = true }
                 .padding(.leading, 16)
         }
         .padding(.top, 6)
@@ -207,43 +218,68 @@ struct HomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    // 站源：固定 3 列。点一下直接切到该站源（漫画/小说/频道也在内，
-                    // 不再像旧版那样把每个站源纵向罗列成一长条）。
+                    // 站源：固定 3 列。点格子只切站源、不关面板，下面的「子频道」跟着换；
+                    // 长按可拖动排序，点标题右侧的排序按钮后每个格子右上角出现 × 可移除。
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("站源").font(.subheadline.weight(.semibold)).foregroundStyle(STVTheme.secondary)
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                            ForEach(HomeSource.all) { s in
-                                let on = s == source
-                                Button { source = s; showChannels = false } label: {
-                                    Text(s.label).font(.subheadline.weight(on ? .semibold : .regular))
-                                        .foregroundStyle(on ? STVTheme.accent : STVTheme.text)
-                                        .lineLimit(1).minimumScaleFactor(0.7)
-                                        .frame(maxWidth: .infinity).frame(height: 40)
-                                        .background(on ? STVTheme.accent.opacity(0.14) : STVTheme.glass,
-                                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                }.buttonStyle(.plain).accessibilityIdentifier("panel.source.\(s.label)")
+                        HStack(spacing: 8) {
+                            Text("站源").font(.subheadline.weight(.semibold)).foregroundStyle(STVTheme.secondary)
+                            Spacer(minLength: 0)
+                            Button {
+                                withAnimation(.snappy(duration: 0.22)) { editingSources.toggle() }
+                            } label: {
+                                Image(systemName: editingSources ? "checkmark" : "arrow.up.arrow.down")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(editingSources ? STVTheme.accent : STVTheme.secondary)
+                                    .frame(width: 28, height: 28)
+                                    .background(editingSources ? STVTheme.accent.opacity(0.14) : STVTheme.glass, in: Circle())
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(editingSources ? "完成站源排序" : "排序或移除站源")
+                            .accessibilityIdentifier("panel.source.edit")
+                        }
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 12) {
+                            ForEach(panelItems) { s in sourceCell(s) }
+                        }
+                        if editingSources {
+                            Text("长按拖动排序 · 点 × 移除 · 移除后可恢复默认")
+                                .font(.caption2).foregroundStyle(STVTheme.secondary)
+                                .transition(.opacity)
                         }
                     }
-                    // 频道：当前站源下的子频道同样固定 3 列，和「红果」那一排保持一致；
-                    // 长标签缩放而不是撑成整行。
-                    ForEach(HomeSource.all.filter { !$0.subs.isEmpty }) { s in
+                    // 子频道：只画当前站源的那一排。旧版按站源逐个分组，名字跟上面的 3 列格子重复，
+                    // 而且只有一路子频道的站点（Jable 等）会重复显示同一个名字。
+                    if source.subs.count > 1 {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(s.label).font(.subheadline.weight(.semibold)).foregroundStyle(STVTheme.secondary)
+                            Text("子频道").font(.subheadline.weight(.semibold)).foregroundStyle(STVTheme.secondary)
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                                ForEach(s.subs, id: \.self) { t in
-                                    let on = s == source && (subs[s] ?? s.subs[0]) == t
-                                    Button { subs[s] = t; source = s; showChannels = false } label: {
+                                ForEach(source.subs, id: \.self) { t in
+                                    let on = (subs[source] ?? source.subs[0]) == t
+                                    Button { subs[source] = t; showChannels = false } label: {
                                         Text(t.subLabel).font(.subheadline.weight(on ? .semibold : .regular))
                                             .foregroundStyle(on ? STVTheme.accent : STVTheme.text)
                                             .lineLimit(1).minimumScaleFactor(0.7)
                                             .frame(maxWidth: .infinity).frame(height: 40)
                                             .background(on ? STVTheme.accent.opacity(0.14) : STVTheme.glass,
                                                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    }.buttonStyle(.plain).accessibilityIdentifier("panel.\(s.label).\(t.subLabel)")
+                                    }.buttonStyle(.plain).accessibilityIdentifier("panel.\(source.label).\(t.subLabel)")
                                 }
                             }
                         }
+                    }
+                    if !SourceOrder.shared.hidden.isEmpty {
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                SourceOrder.shared.reset()
+                                syncPanel()
+                            }
+                        } label: {
+                            Text("恢复全部站源").font(.footnote.weight(.medium))
+                                .foregroundStyle(STVTheme.accent)
+                                .frame(maxWidth: .infinity).frame(height: 36)
+                                .background(STVTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("panel.source.reset")
                     }
                 }.padding(20)
             }
@@ -251,9 +287,105 @@ struct HomeView: View {
             .navigationTitle("频道").navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier("home.channelPanel")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showChannels = false } } }
+            .onAppear { syncPanel() }
+            .onChange(of: SourceGate.shared.visibleSites) { _, _ in syncPanel() }
+            .onChange(of: draggingSource) { _, v in
+                // 拖到面板外被系统取消时 drop 回调不会来，浮起状态会一直留着，这里兜底复位。
+                guard v != nil else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                    if draggingSource == v { withAnimation(.snappy) { draggingSource = nil } }
+                }
+            }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    /// 站源格子：选中态描边、拖动时浮起、排序态右上角 ×。
+    @ViewBuilder private func sourceCell(_ s: HomeSource) -> some View {
+        let on = s == source
+        let lifted = draggingSource == s
+        Button {
+            guard !editingSources else { return }
+            withAnimation(.snappy(duration: 0.2)) { source = s }
+            // 只有一路子频道的源（长视频站 / 漫画 / 小说）点完就关，少一步「完成」。
+            if s.subs.count <= 1 { showChannels = false }
+        } label: {
+            Text(s.label).font(.subheadline.weight(on ? .semibold : .regular))
+                .foregroundStyle(on ? STVTheme.accent : STVTheme.text)
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity).frame(height: 40)
+                .background(on ? STVTheme.accent.opacity(0.14) : STVTheme.glass,
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(on ? STVTheme.accent.opacity(0.45) : Color.clear, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("panel.source.\(s.label)")
+        .overlay(alignment: .topTrailing) {
+            if editingSources {
+                Button { removeSource(s) } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(Color.white, Color(red: 0.86, green: 0.30, blue: 0.30))
+                        .font(.system(size: 17))
+                        .background(Circle().fill(STVTheme.surface).padding(1.5))
+                }
+                .buttonStyle(.plain)
+                .offset(x: 6, y: -6)
+                .accessibilityLabel("移除 \(s.label)")
+                .accessibilityIdentifier("panel.source.remove.\(s.label)")
+            }
+        }
+        .scaleEffect(lifted ? 1.06 : 1)
+        .opacity(lifted ? 0.92 : 1)
+        .shadow(color: .black.opacity(lifted ? 0.30 : 0), radius: 12, y: 5)
+        .zIndex(lifted ? 2 : 0)
+        .onDrag {
+            withAnimation(.snappy(duration: 0.16)) { draggingSource = s }
+            return NSItemProvider(object: s.storeKey as NSString)
+        }
+        .onDrop(of: [.text], delegate: SourceDropDelegate(item: s, items: $panelItems,
+                                                          dragging: $draggingSource,
+                                                          onCommit: { SourceOrder.shared.setOrder(panelItems.map(\.storeKey)) }))
+    }
+
+    private func removeSource(_ s: HomeSource) {
+        withAnimation(.snappy(duration: 0.2)) { panelItems.removeAll { $0 == s } }
+        SourceOrder.shared.hide(s)
+        if source == s { source = panelItems.first ?? .hongguo }
+    }
+
+    private func syncPanel() {
+        let list = SourceOrder.shared.arrange(HomeSource.all)
+        if panelItems != list { panelItems = list }
+    }
+}
+
+/// 3 列网格里的长按拖动排序：拖到某个格子上面时，把被拖的项插到它前/后。
+private struct SourceDropDelegate: DropDelegate {
+    let item: HomeSource
+    @Binding var items: [HomeSource]
+    @Binding var dragging: HomeSource?
+    let onCommit: () -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let d = dragging, d != item,
+              let from = items.firstIndex(of: d),
+              let to = items.firstIndex(of: item), from != to else { return }
+        withAnimation(.snappy(duration: 0.2)) {
+            items.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        onCommit()
+        return true
     }
 }
 
