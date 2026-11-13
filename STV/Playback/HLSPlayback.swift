@@ -46,7 +46,13 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
         if scheme == Self.keyScheme {
             let id = ObjectIdentifier(req)
             pending.insert(id)
-            finishKey(req, id: id)
+            // iOS 17 崩溃根因（2026-11-13 1.8(15) 真机 ips，SIGABRT on stv.hls.loader）：
+            // 不能在 shouldWaitFor... 同步 delegate 回调栈内调用 finishLoading。返回 true 的
+            // 契约是「我会稍后完成」，同步 finish 时 AVFoundation 还没把 request 登记为
+            // waiting，状态机冲突会抛不可捕获的 NSInternalInconsistencyException。
+            // playlist 路径本来就是异步 finish（URLSession 回调 → queue.async），所以从不崩。
+            // key 路径统一排到 delegate queue 的下一轮，delegate 先返回，再 finish。
+            queue.async { [weak self] in self?.finishKey(req, id: id) }
             return true
         }
         guard scheme.hasPrefix(Self.plScheme), var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
@@ -81,32 +87,39 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
 
     private func finishKey(_ req: AVAssetResourceLoadingRequest, id: ObjectIdentifier) {
         guard claim(req, id: id) else { return }
-        guard let key = Bytes.fromHex(keyHex), key.count == 16 else {
-            finish(req, with: URLError(.userAuthenticationRequired))
-            return
+        // AVFCore 抛的是 Objective-C 异常，Swift 无法 catch；一旦逃逸出这个 dispatch block
+        // 就是 std::terminate -> SIGABRT。整段走 ObjC @try/@catch 兜底。
+        STVAVLoadingGuard.guarded {
+            guard let key = Bytes.fromHex(self.keyHex), key.count == 16 else {
+                self.finish(req, with: URLError(.userAuthenticationRequired))
+                return
+            }
+            req.contentInformationRequest?.contentType = "public.data"
+            req.contentInformationRequest?.contentLength = 16
+            req.contentInformationRequest?.isByteRangeAccessSupported = false
+            req.dataRequest?.respond(with: Data(key))
+            self.finish(req, with: nil)
         }
-        req.contentInformationRequest?.contentType = "public.data"
-        req.contentInformationRequest?.contentLength = 16
-        req.contentInformationRequest?.isByteRangeAccessSupported = false
-        req.dataRequest?.respond(with: Data(key))
-        finish(req, with: nil)
     }
 
     private func complete(_ req: AVAssetResourceLoadingRequest, id: ObjectIdentifier,
                           data: Data?, resp: URLResponse?, err: Error?, real: URL) {
         tasks.removeValue(forKey: id)
         guard claim(req, id: id) else { return }
-        guard let data, err == nil,
-              (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false else {
-            NSLog("%@", "[STV] hls-fail status=\((resp as? HTTPURLResponse)?.statusCode ?? -1) host=\(real.host ?? "?") path=\(real.path.prefix(70)) ct=\(resp?.mimeType ?? "-") err=\(err.map { "\($0)" } ?? "-")")
-            finish(req, with: err ?? URLError(.badServerResponse))
-            return
+        // 同 finishKey：所有 respond / finishLoading 都在 ObjC @try/@catch 内。
+        STVAVLoadingGuard.guarded {
+            guard let data, err == nil,
+                  (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false else {
+                NSLog("%@", "[STV] hls-fail status=\((resp as? HTTPURLResponse)?.statusCode ?? -1) host=\(real.host ?? "?") path=\(real.path.prefix(70)) ct=\(resp?.mimeType ?? "-") err=\(err.map { "\($0)" } ?? "-")")
+                self.finish(req, with: err ?? URLError(.badServerResponse))
+                return
+            }
+            let text = self.rewrite(HLSAdFilter.apply(String(decoding: data, as: UTF8.self), base: real), base: real)
+            req.contentInformationRequest?.contentType = "public.m3u-playlist"
+            req.contentInformationRequest?.contentLength = Int64(text.utf8.count)
+            req.dataRequest?.respond(with: Data(text.utf8))
+            self.finish(req, with: nil)
         }
-        let text = rewrite(HLSAdFilter.apply(String(decoding: data, as: UTF8.self), base: real), base: real)
-        req.contentInformationRequest?.contentType = "public.m3u-playlist"
-        req.contentInformationRequest?.contentLength = Int64(text.utf8.count)
-        req.dataRequest?.respond(with: Data(text.utf8))
-        finish(req, with: nil)
     }
 
     /// Atomically take ownership of the right to finish. AVFoundation itself may have already
@@ -117,9 +130,14 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
     }
 
     /// The single exit that touches AVFoundation's finishLoading. No other call site exists.
+    /// `finishLoading` / `finishLoadingWithError:` 会抛 Objective-C 异常，Swift 捕获不到，
+    /// 因此即便被上面的 guarded 块调用，这里仍单独再包一层，确保任何调用路径都不会
+    /// 让异常逃逸出 dispatch block（否则 std::terminate -> SIGABRT，整个 App 被杀）。
     private func finish(_ req: AVAssetResourceLoadingRequest, with error: Error?) {
-        guard !req.isCancelled, !req.isFinished else { return }
-        if let error { req.finishLoading(with: error) } else { req.finishLoading() }
+        STVAVLoadingGuard.guarded {
+            guard !req.isCancelled, !req.isFinished else { return }
+            if let error { req.finishLoading(with: error) } else { req.finishLoading() }
+        }
     }
 
     /// Absolutize URIs; nested playlists go back through the loader, keys go to the local key scheme.
@@ -138,7 +156,16 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
                 let isKey = line.uppercased().hasPrefix("#EXT-X-KEY")
                 guard let m = HTML.groups("URI\\s*=\\s*\"([^\"]+)\"", line), let u = abs(m[1]) else { return line }
                 let repl: String
-                if isKey { repl = keyHex.isEmpty ? u.absoluteString : Self.keyScheme + "://key" }
+                if isKey {
+                    // 只有确实解析出合法 16 字节 AES key 才改写成本地 stvkey://。
+                    // 黄果换线路后 key URI 常返回非密钥内容（HTML/空串/长度不对），
+                    // 旧逻辑只要 keyHex 非空就改写，随后 finishKey 里 Bytes.fromHex 失败，
+                    // 走 error 分支调用 finishLoadingWithError: —— 正是 1.8(15) 真机
+                    // SIGABRT 的栈顶。保留原始 URI 时 AVURLAsset 已带 Referer/UA，
+                    // 让 AVFoundation 自行取 key，最坏只是该集播不出，绝不会杀进程。
+                    let valid = (Bytes.fromHex(self.keyHex)?.count ?? 0) == 16
+                    repl = valid ? Self.keyScheme + "://key" : u.absoluteString
+                }
                 else if line.uppercased().hasPrefix("#EXT-X-MEDIA") { repl = via(u, Self.plScheme) }
                 else { repl = u.absoluteString }
                 return line.replacingOccurrences(of: m[1], with: repl)
