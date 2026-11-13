@@ -245,7 +245,7 @@ struct PlayerScreen: View {
             .ignoresSafeArea()
         }
         .background(Color.black.ignoresSafeArea())
-        .background(InteractivePopEnabler())
+        .background(NavPopGate())
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(landscape)
@@ -253,17 +253,21 @@ struct PlayerScreen: View {
         .persistentSystemOverlays(.hidden)
         .animation(.easeOut(duration: 0.18), value: panel)
         .task {
-            // 不要在 push 转场的这一帧里解锁方向：setNeedsUpdateOfSupportedInterfaceOrientations()
-            // 会打断正在进行的导航转场，UIKit 把 push 回滚成「导航栏出来了但内容不切」，
-            // 并在窗口顶层留下一个拦截触摸的转场层 —— 就是「点视频没进去、只剩左上角 Back、
-            // 点哪都没反应」的根因。等转场结束（0.6s）再解锁，用户此时也还没横屏。
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(600))
-                guard !Task.isCancelled else { return }
-                OrientationGate.unlock()
-            }
             co.start()
             if co.current == nil { await load() }
+        }
+        // 方向解锁必须挂在 `.task` 本身上。
+        //
+        // 原来这里写的是 `Task { @MainActor in ... }` —— 那是**非结构化**任务，不继承
+        // `.task` 的取消。播放器在 0.6 秒内被关掉时，这个内部任务照样会跑完并调用
+        // `OrientationGate.unlock()`，在一个已经消失的页面上请求重算方向。反过来如果
+        // 改用 `.task`，视图一消失 `Task.sleep` 就抛 CancellationError，解锁直接跳过。
+        //
+        // 0.6 秒这个延迟本身也是必须的：`setNeedsUpdateOfSupportedInterfaceOrientations()`
+        // 会打断正在进行的转场，等它结束再解锁。
+        .task {
+            do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
+            OrientationGate.unlock()
         }
         .task { await screenshotHooks() }
         .task(id: lastInteraction) {

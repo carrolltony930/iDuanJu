@@ -183,26 +183,41 @@ extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
     }
 }
 
-/// Re-enable interactive pop on appear (SwiftUI may leave it disabled when the bar is hidden).
-struct InteractivePopEnabler: UIViewRepresentable {
-    func makeUIView(context: Context) -> UIView { PopEnablerView() }
-    func updateUIView(_ uiView: UIView, context: Context) {
-        (uiView as? PopEnablerView)?.enablePop()
-    }
+/// 播放器在屏上时，把导航栈的边缘返回手势**关掉**。
+///
+/// 播放器已经不是 push 进导航栈的页面了，但详情页还在导航栈里（就在播放器下面）。
+/// `interactivePopGestureRecognizer` 是屏幕级手势，优先级高于播放器内部的手势：
+/// 在播放器上从左边缘往右滑，被 pop 的是背后那个详情页。如果这次交互式 pop 在
+/// 手指抬起前被打断（播放器的手势 / 视图移除抢走了 touchEnd），UIKit 会一直停在
+/// interactive 状态，把那层 `UITransitionView` 留在窗口上 —— 又是「画面正常、
+/// 轮播还在动、点哪都没反应」。
+///
+/// 所以播放器出现时禁用，消失时按导航栈深度恢复（只剩根页面时保持禁用）。
+struct NavPopGate: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView { GateView() }
+    func updateUIView(_ uiView: UIView, context: Context) { (uiView as? GateView)?.apply() }
 
-    final class PopEnablerView: UIView {
+    final class GateView: UIView {
+        private weak var nav: UINavigationController?
+
         override func didMoveToWindow() {
             super.didMoveToWindow()
-            enablePop()
+            apply()
         }
         override func layoutSubviews() {
             super.layoutSubviews()
-            enablePop()
+            apply()
         }
-        func enablePop() {
-            guard let nav = nearestNavigationController() else { return }
-            nav.interactivePopGestureRecognizer?.isEnabled = true
-            nav.interactivePopGestureRecognizer?.delegate = nav
+        /// 视图被 SwiftUI 拆掉时会先收到 willMove(toWindow: nil)，在这里恢复。
+        override func willMove(toWindow newWindow: UIWindow?) {
+            super.willMove(toWindow: newWindow)
+            guard newWindow == nil, let n = nav else { return }
+            n.interactivePopGestureRecognizer?.isEnabled = n.viewControllers.count > 1
+            nav = nil
+        }
+        func apply() {
+            if nav == nil { nav = nearestNavigationController() }
+            nav?.interactivePopGestureRecognizer?.isEnabled = false
         }
         private func nearestNavigationController() -> UINavigationController? {
             var r: UIResponder? = self

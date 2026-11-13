@@ -38,8 +38,12 @@ enum NavBarHealer {
               let win = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first else { return }
         guard win.rootViewController?.presentedViewController == nil else { return }
         for v in win.subviews where String(describing: type(of: v)).contains("TransitionView") {
-            guard v.isUserInteractionEnabled, v.layer.animationKeys() == nil else { continue }
+            // 还在跑动画的说明是正常转场，别碰。
+            guard v.layer.animationKeys() == nil else { continue }
+            // 隐藏比只关交互更彻底：hidden 的视图连 hitTest 都不参加。
+            // 只对「没有动画、又不是根视图」的窗口级容器做，不会影响任何业务界面。
             v.isUserInteractionEnabled = false
+            v.isHidden = true
         }
     }
 

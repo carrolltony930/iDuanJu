@@ -74,10 +74,13 @@ struct RootTabView: View {
             }
         }
         // 关闭播放器后顺手清一次可能残留的转场容器（历史版本留下的，升级后重启即清）。
+        // 清两次：UIKit 有时候是在关闭之后的下一个动画周期才把那个空容器挂到窗口上的。
         .onChange(of: player.route) { _, v in
             guard v == nil else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                MainActor.assumeIsolated { NavBarHealer.releaseStuckTransitionLayers() }
+            for d in [0.5, 1.6] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + d) {
+                    MainActor.assumeIsolated { NavBarHealer.releaseStuckTransitionLayers() }
+                }
             }
         }
         // Cold start: restore a saved TDLib login (no network login, nothing is sent).
