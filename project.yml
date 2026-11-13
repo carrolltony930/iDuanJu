@@ -38,8 +38,10 @@ targets:
       # 快进/快退圆钮、缩小暂停键，报错时不再画中心按钮，错误文案改短中文。
       # 2.3(20)：加运行日志（Documents/stv.log，可见于「文件」App）+ 失败浮层显示 key/playlist
       # 真实结果，用于定位 -19152 到底卡在 403、超时还是没发请求。
-      MARKETING_VERSION: "2.3"
-      CURRENT_PROJECT_VERSION: "20"
+      # 2.4(21)：AES key 改由 loopback http 提供（/k/<hex>），不再用自定义 scheme —— iOS 17
+      # 对 stvkey:// 作 key URI 根本不发请求，必落 -19152。保留全部诊断日志。
+      MARKETING_VERSION: "2.4"
+      CURRENT_PROJECT_VERSION: "21"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h

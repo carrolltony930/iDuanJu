@@ -55,7 +55,9 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
             // NEVER finish synchronously inside this delegate callback on iOS 17: AVFCore has not
             // yet registered the request as "waiting", so a synchronous finishLoading throws an
             // uncatchable NSInternalInconsistencyException (1.8(15) SIGABRT on stv.hls.loader).
-            if url.host == "key", url.path.isEmpty {
+            // host == "key" 只由本地快路径产生。URLComponents 会把 `stvkey://key` 的 path 规范化
+            // 成 "/"，所以不能用 path.isEmpty 判断（那会让本地 key 掉进远程分支去请求 https://key）。
+            if url.host == "key" {
                 // Local fast path: stvkey://key — serve the key resolve() already fetched.
                 queue.async { [weak self] in
                     guard let self else { return }
@@ -226,7 +228,16 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
                     //     full header set: keep the original host/path/query, just swap the scheme.
                     let valid = (Bytes.fromHex(self.keyHex)?.count ?? 0) == 16
                     if valid {
-                        repl = Self.keyScheme + "://key"                       // local fast path
+                        // 走 loopback http：key 变成普通 http 资源，AVFoundation 自己取，不经过
+                        // resourceLoader。iOS 17 上自定义 scheme 作 key URI 时它根本不发请求，
+                        // 一路等到 -19152（真机 2.2 仍复现）。
+                        if let lk = LocalHLSProxy.shared.keyURL(hex: self.keyHex) {
+                            repl = lk
+                            STVLog.w("key route loopback \(lk.prefix(46))")
+                        } else {
+                            repl = Self.keyScheme + "://key"
+                            STVLog.w("key route stvkey://key (loopback unavailable)")
+                        }
                     } else {
                         let ks = u.scheme == "http" ? Self.keyScheme + "-http" : Self.keyScheme
                         repl = via(u, ks)                                     // self-fetched with headers

@@ -110,6 +110,16 @@ final class LocalHLSProxy: @unchecked Sendable {
 
     func tdSession(_ token: String) -> TDStreamSession? { route(token)?.td }
 
+    /// `http://127.0.0.1:<port>/k/<hex>` — AES key over plain http.
+    /// iOS 17 refuses / never issues the resource-loader request for a custom scheme used as an
+    /// HLS key URI, so every custom-scheme attempt ends in CoreMediaErrorDomain -19152
+    /// ("encryption key timeout") without a single byte on the wire. Plain http from loopback is
+    /// the one form AVFoundation always handles, headers not needed.
+    func keyURL(hex: String) -> String? {
+        guard hex.count == 32, Bytes.fromHex(hex)?.count == 16, let p = start() else { return nil }
+        return "http://127.0.0.1:\(p)/k/\(hex.lowercased())"
+    }
+
     private func register(_ upstream: String, headers: [String: String], strip: Bool, budget: Int, kind: String) -> String? {
         guard let port = start() else { return nil }
         let token = String(UUID().uuidString.prefix(8)).lowercased()
@@ -247,6 +257,12 @@ final class LocalHLSProxy: @unchecked Sendable {
         if segs.count == 2, segs[0] == "tg" {
             guard let td = route("tg-\(Self.tdFileId(segs[1]))")?.td else { return reply(c, 404, "text/plain", Data()) }
             return await serveTD(c, td, range: rangeHeader, head: parts[0] == "HEAD")
+        }
+        // AES-128 key served as a plain http resource: AVFoundation fetches it itself, no
+        // custom scheme involved. -19152 only ever happened on the custom-scheme path.
+        if segs.count == 2, segs[0] == "k" {
+            guard let b = Bytes.fromHex(segs[1]), b.count == 16 else { return reply(c, 400, "text/plain", Data()) }
+            return reply(c, 200, "application/octet-stream", Data(b))
         }
         guard segs.count == 2, comps.count == 2, comps[1].hasPrefix("u="),
               let upstream = Self.unb64(String(comps[1].dropFirst(2))), let url = URL(string: upstream),
@@ -450,7 +466,7 @@ final class LocalHLSProxy: @unchecked Sendable {
     }
 
     private func reply(_ c: NWConnection, _ status: Int, _ type: String, _ body: Data) {
-        let reason = [200: "OK", 206: "Partial Content", 404: "Not Found", 405: "Method Not Allowed", 502: "Bad Gateway"][status] ?? "Error"
+        let reason = [200: "OK", 206: "Partial Content", 400: "Bad Request", 404: "Not Found", 405: "Method Not Allowed", 502: "Bad Gateway"][status] ?? "Error"
         var out = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".utf8)
         out.append(body)
         c.send(content: out, completion: .contentProcessed { _ in c.cancel() })
