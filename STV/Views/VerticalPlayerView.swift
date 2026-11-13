@@ -64,6 +64,8 @@ struct PlayerScreen: View {
     @State private var seekDrag: (base: Double, target: Double)?
     @Environment(\.verticalSizeClass) private var vClass
     @Environment(\.dismiss) private var dismiss
+    /// 防连点：返回键被连续触发时重复 dismiss 会让导航栈错位（首页残留系统 Back 按钮，之后点什么都没反应）。
+    @State private var closing = false
     private let library = LibraryStore.shared
 
     private var landscape: Bool { vClass == .compact }
@@ -161,8 +163,9 @@ struct PlayerScreen: View {
                     } else if locked {
                         if controlsVisible { lockOnly(full, ins: ins).transition(.opacity) }
                     } else if controlsVisible {
-                        // 报错/重试时不要再画中心按钮：它正好压在错误文字上，把提示挡住。
-                        if let cur = co.current, !scrubbing, panel == nil, co.errors[cur] == nil {
+                        // 报错/重试/加载中都不画中心按钮：它正好压在「正在载入分集」和错误文字上，
+                        // 把提示挡成「正在 [按钮] 分集」。只有真正就绪（readyIndex == cur）才显示。
+                        if let cur = co.current, co.readyIndex == cur, !scrubbing, panel == nil, co.errors[cur] == nil {
                             PlayerCenterControls(co: co, onInteract: flashChrome)
                                 .position(x: landscape ? full.width / 2 : rect.midX, y: landscape ? full.height / 2 : rect.midY)
                                 .transition(.opacity)
@@ -266,10 +269,14 @@ struct PlayerScreen: View {
         .onAppear { OrientationGate.unlock(); SpeedHaptics.prepare() }
         .onDisappear {
             // iOS 17：视图正在 pop 时同步改 @State/Observable 属性会触发 SwiftUI 崩溃。
-            // 延后到下一个 main runloop，等视图树拆完再停播放器、恢复亮度、锁回竖屏。
+            // 延后到下一个 main runloop，等视图树拆完再停播放器、恢复亮度。
             DispatchQueue.main.async {
                 co.teardown()
                 adjuster.restoreBrightness()
+            }
+            // 旋转请求必须再往后放：requestGeometryUpdate 在 pop 动画期间调用会一直等旋转事务，
+            // 主线程被占住，表现就是「左上角返回后整个界面卡死」。竖屏状态下也无需重复请求。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 OrientationGate.lockPortrait()
             }
         }
@@ -411,6 +418,14 @@ struct PlayerScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// 返回的唯一出口：连点只放行一次（重复 dismiss 会让导航栈错位），1.2 秒后自动解锁。
+    private func close() {
+        guard !closing else { return }
+        closing = true
+        dismiss()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { closing = false }
+    }
+
     private var controlsVisible: Bool {
         !speedMode && (showChrome || co.readyIndex == nil || scrubbing || panel != nil || voiceOver)
     }
@@ -427,7 +442,7 @@ struct PlayerScreen: View {
     private func portraitControls(_ full: CGSize, ins: EdgeInsets) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                PlayerIconButton(symbol: "chevron.left", label: "返回") { dismiss() }
+                PlayerIconButton(symbol: "chevron.left", label: "返回") { close() }
                 Spacer()
                 PlayerIconButton(symbol: "pip.enter", label: "画中画") { co.togglePiP() }
                     .disabled(!co.pipPossible).opacity(co.pipPossible ? 1 : 0.55)
@@ -473,7 +488,7 @@ struct PlayerScreen: View {
     private func landscapeControls(_ full: CGSize, ins: EdgeInsets) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                PlayerIconButton(symbol: "chevron.left", label: "返回") { dismiss() }
+                PlayerIconButton(symbol: "chevron.left", label: "返回") { close() }
                 Button { co.autoNext.toggle(); showOSD(co.autoNext ? "连播：开" : "连播：关") } label: {
                     Image(systemName: "repeat").font(.system(size: 19, weight: .medium))
                         .opacity(co.autoNext ? 1 : 0.4).frame(width: 44, height: 44).contentShape(Rectangle())

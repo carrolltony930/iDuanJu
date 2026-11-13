@@ -69,7 +69,9 @@ actor HuangguoClient {
 
     // MARK: HTTP
 
-    private func fetch(_ url: String, referer: String, headers: [String: String] = [:]) async throws -> Data {
+    /// Pure network call: reads no actor state (session/userAgent are `let`), so it can be called
+    /// from concurrent tasks. Needed because one episode resolves up to 4 variants in parallel.
+    private nonisolated func fetch(_ url: String, referer: String, headers: [String: String] = [:]) async throws -> Data {
         guard let u = URL(string: url) else { throw ProviderError.invalid("bad url") }
         var r = URLRequest(url: u)
         r.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
@@ -404,16 +406,35 @@ actor HuangguoClient {
         if !vars.isEmpty { targets = vars.map { ($0.url, $0) } }
         var streams: [HGStream] = []
         var duration: Double?
-        for (i, (u, v)) in targets.prefix(4).enumerated() {
-            let pl = v == nil ? master : String(decoding: (try? await fetch(u, referer: referer, headers: headers)) ?? Data(), as: UTF8.self)
-            let k = HLSPlaylist.keys(pl, u)
-            var keyHex = ""
-            if k.encrypted, !k.uri.isEmpty, let d = try? await fetch(k.uri, referer: referer, headers: keyFetchHeaders) { keyHex = HLSPlaylist.keyHex(d) }
-            if duration == nil { let d = HLSPlaylist.duration(pl); if d > 0 { duration = d } }
-            streams.append(HGStream(streamId: "hls\(i)", quality: v.map(HLSPlaylist.quality) ?? "source", url: u, key: keyHex,
-                                    width: v?.width, height: v?.height, bitrate: v?.bandwidth,
-                                    kind: k.encrypted ? .hlsAES : .hls, headers: headers))
+        // 之前这里是串行 for 循环：4 个清晰度 × (子 playlist + key) = 最多 8 个 HTTP 往返排队，
+        // 真机上就是「点开先转圈 20–30 秒」。App 源只有一路 m3u8，2 个往返，所以几乎秒开。
+        // 改成并发后总耗时 ≈ 最慢的那一个往返；fetch 是 nonisolated 纯网络，没有共享状态。
+        let batch: [(Int, String, HLSPlaylist.Variant?)] =
+            Array(targets.prefix(4).enumerated()).map { ($0.offset, $0.element.0, $0.element.1) }
+        var resolved: [Int: HGStream] = [:]
+        var dur: Double = 0
+        await withTaskGroup(of: (Int, HGStream, Double).self) { group in
+            for (i, u, v) in batch {
+                group.addTask { [master, referer, headers, keyFetchHeaders] in
+                    let pl = v == nil ? master : String(decoding: (try? await self.fetch(u, referer: referer, headers: headers)) ?? Data(), as: UTF8.self)
+                    let k = HLSPlaylist.keys(pl, u)
+                    var keyHex = ""
+                    if k.encrypted, !k.uri.isEmpty, let d = try? await self.fetch(k.uri, referer: referer, headers: keyFetchHeaders) {
+                        keyHex = HLSPlaylist.keyHex(d)
+                    }
+                    let s = HGStream(streamId: "hls\(i)", quality: v.map(HLSPlaylist.quality) ?? "source", url: u, key: keyHex,
+                                     width: v?.width, height: v?.height, bitrate: v?.bandwidth,
+                                     kind: k.encrypted ? .hlsAES : .hls, headers: headers)
+                    return (i, s, HLSPlaylist.duration(pl))
+                }
+            }
+            for await (i, s, d) in group {
+                resolved[i] = s
+                if dur == 0, d > 0 { dur = d }
+            }
         }
+        for i in 0..<batch.count { if let s = resolved[i] { streams.append(s) } }
+        if dur > 0 { duration = dur }
         let note = streams.contains { $0.kind == .hlsAES && $0.key.isEmpty } ? "加密 HLS 未能取到密钥" : nil
         return HGResolvedVideo(vid: episode.vid, url: streams.first?.url, key: streams.first?.key, duration: duration,
                                expiresAt: nil, err: nil, streams: streams, note: note)

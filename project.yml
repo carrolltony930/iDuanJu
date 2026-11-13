@@ -40,8 +40,11 @@ targets:
       # 真实结果，用于定位 -19152 到底卡在 403、超时还是没发请求。
       # 2.4(21)：AES key 改由 loopback http 提供（/k/<hex>），不再用自定义 scheme —— iOS 17
       # 对 stvkey:// 作 key URI 根本不发请求，必落 -19152。保留全部诊断日志。
-      MARKETING_VERSION: "2.4"
-      CURRENT_PROJECT_VERSION: "21"
+      # 2.5(22)：黄果视频站首次起播 20–30 秒 → 4 个清晰度的子 playlist/key 改并发拉取；
+      # 播放器加载中不再画中心按钮（之前压在「正在载入分集」上）；返回键防连点 + 旋转请求
+      # 延后到 pop 动画之后，修「左上角返回卡死」。
+      MARKETING_VERSION: "2.5"
+      CURRENT_PROJECT_VERSION: "22"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h

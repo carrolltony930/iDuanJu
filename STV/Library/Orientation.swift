@@ -28,8 +28,11 @@ final class OrientationGate: NSObject, UIApplicationDelegate {
     }
     @MainActor static func lockPortrait() {
         mask = .portrait
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+        // 只有当前真的是横屏才发旋转请求。竖屏状态下也调 requestGeometryUpdate 会白白开一次
+        // 旋转事务；如果此时正好在 pop 动画里，主线程会一直等它，表现为「返回后卡死」。
+        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           !scene.interfaceOrientation.isPortrait {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) { _ in }
         }
         refresh()
     }
