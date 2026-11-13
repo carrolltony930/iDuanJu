@@ -346,7 +346,12 @@ struct DramaDetailView: View {
             if series.source == .hongguo {
                 // Warm the play URL of the episode a tap would open (resume point, else episode 1).
                 let i = library.progress(for: series)?.episodeIndex ?? 0
-                if d.episodes.indices.contains(i) { HongguoClient.shared.prefetch(vids: [d.episodes[i].vid]) }
+                // HongguoClient 是 actor：必须 await，否则 Swift 6.2 运行时会触发
+                // actor 隔离执行器断言（构建日志把它标为 "error in Swift 6 language mode"）。
+                if d.episodes.indices.contains(i) {
+                    let vid = d.episodes[i].vid
+                    Task { await HongguoClient.shared.prefetch(vids: [vid]) }
+                }
                 // Second pass: cast / tags / rating from the official site.
                 if let e = await Catalog.enriched(series, d), detail?.seriesId == e.seriesId { detail = e }
             }

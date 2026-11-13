@@ -140,13 +140,16 @@ enum SiteLog {
     }()
 
     static func add(_ s: String) {
-        let line = stamp.string(from: Date()) + "  " + s
-        logger.info("\(line, privacy: .public)")
+        // iOS 17 兼容：站点请求 / 插件 / 本地代理 / 诊断都从各自的后台线程写日志，
+        // 共享的 DateFormatter 非线程安全，并发调用会 EXC_BAD_ACCESS。把「时间戳生成 +
+        // lines 读写」整体纳入同一把锁；os_log 与文件写入用的是局部快照，放在锁外。
         lock.lock()
+        let line = stamp.string(from: Date()) + "  " + s
         lines.append(line)
         if lines.count > 400 { lines.removeFirst(lines.count - 400) }
         let snapshot = lines
         lock.unlock()
+        logger.info("\(line, privacy: .public)")
         if let file { try? snapshot.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8) }
     }
 

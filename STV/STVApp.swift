@@ -5,8 +5,8 @@ struct STVApp: App {
     @UIApplicationDelegateAdaptor(OrientationGate.self) private var orientation
     init() {
         CFSolver.install()
-        // 主线程卡顿看门狗：卡住时把「卡了多久 + 当时在做什么」写进站点诊断日志。
-        MainThreadWatchdog.start()
+        // iOS 17 兼容：不再启动全局后台主线程看门狗。它从后台线程写站点日志，
+        // 与主线程日志并发时共享的 DateFormatter 会崩溃；长信号量等待还会拖死播放主线程。
         // Load plugin / 采集站 indexes before anything reads `Sites.all` or `SourceGate`.
         MainActor.assumeIsolated { _ = CMSStore.shared; _ = PluginStore.shared }
     }

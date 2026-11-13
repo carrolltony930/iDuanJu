@@ -512,19 +512,10 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     func releaseHeldFrame() { if heldFrame != nil { heldFrame = nil } }
 
     func activate(_ i: Int) {
-        AppTrace.set("activate #\(i)")
         guard i == current, episodes.indices.contains(i), observer != nil else { return }
         save(force: true)
         let token = UUID()
         activation = token
-        // 看门狗：25 秒还没出画面就报错并可重试，避免无限转圈（线路本身失效、代理卡住等）。
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(25))
-            guard let self, self.activation == token, self.readyIndex == nil, self.errors[i] == nil else { return }
-            self.errors[i] = "载入超时（25 秒没拿到画面），点重试或换线路"
-            self.activation = UUID()
-            self.engine.pause()
-        }
         if let r = readyIndex, heldFrame == nil, let img = Self.snapshot(engine.surface) { heldFrame = (img, r) }
         readyIndex = nil
         engine.pause()
@@ -533,16 +524,13 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
         for k in tasks.keys where k != i && k != i + 1 {
             tasks.removeValue(forKey: k)?.cancel()
         }
-        // 释放代理路由/预取缓存可能牵扯网络与锁，放到后台做，避免切线路时卡住主线程。
-        var releasing: [String] = []
+        // iOS 17 兼容：代理路由/预取缓存的释放统一回到主线程同步执行（v10 稳定基线）。
+        // 1.7 曾用 Task.detached 在后台线程调用 LocalHLSProxy.release（内部含 NSLock、
+        // prefetcher.stop、Task{await td.cancel()}），在 Swift 6.2 运行时会触发跨线程
+        // 执行器断言与数据竞争。缓存目录本身已由 PrefetchStore.remove 在后台删除，
+        // 这里同步释放路由不会阻塞主线程。
         for (k, tok) in prefetchTokens where k != i {
-            // Only the playing episode pre-buffers; others drop their proxy route + cache.
-            releasing.append(tok); prefetchTokens[k] = nil; prepared[k] = nil
-        }
-        if !releasing.isEmpty {
-            Task.detached(priority: .utility) {
-                for tok in releasing { LocalHLSProxy.shared.release(tok) }
-            }
+            LocalHLSProxy.shared.release(tok); prefetchTokens[k] = nil; prepared[k] = nil
         }
         prebuffer = nil
         for k in prepared.keys where abs(k - i) > 1 {
@@ -702,7 +690,6 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     }
 
     private func prepare(_ i: Int) async throws -> Source {
-        AppTrace.set("prepare #\(i)")
         if let source = prepared[i] {
             if case .file(let url) = source, !FileManager.default.fileExists(atPath: url.path) {
                 prepared[i] = nil
@@ -780,7 +767,6 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     /// Long-video sources go through the loopback proxy so segments / MP4 ranges come from the byte
     /// pre-buffer. AES-128 streams with an out-of-band key keep the resource-loader path.
     private func prebuffered(_ s: HGStream, budget: Int, index i: Int) -> Source? {
-        AppTrace.set("prebuffer #\(i)")
         if let tok = LocalHLSProxy.token(of: s.url) {           // SupJav: already proxied
             LocalHLSProxy.shared.enablePrefetch(tok, budget: budget)
             prefetchTokens[i] = tok
@@ -827,12 +813,9 @@ final class PlaybackCoordinator: NSObject, @preconcurrency AVPictureInPictureCon
     }
 
     func choose(_ s: HGStream, for i: Int) {
-        AppTrace.set("choose #\(i)")
         guard chosen[i] != s else { return }
-        // 释放旧线路的代理路由/预取缓存不在主线程做，否则切线路会假死。
-        if let tok = prefetchTokens.removeValue(forKey: i) {
-            Task.detached(priority: .utility) { LocalHLSProxy.shared.release(tok) }
-        }
+        // iOS 17 兼容：回到主线程同步释放（同 activate），避免 Task.detached 跨线程访问代理状态。
+        if let tok = prefetchTokens.removeValue(forKey: i) { LocalHLSProxy.shared.release(tok) }
         tasks.removeValue(forKey: i)?.cancel()
         chosen[i] = s; prepared[i] = nil
         if current == i { activate(i) }

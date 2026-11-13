@@ -1,47 +1,22 @@
 import Foundation
 
-/// 最近一步「正在做什么」，供主线程看门狗记录用。
+/// 「最近一步在做什么」的埋点。iOS 17 兼容版改为彻底 no-op：
+/// 旧实现是一把全局 NSLock，被播放热路径（activate/prepare/choose/prebuffer）频繁加锁，
+/// 在 Swift 6.2 运行时会与 @MainActor 隔离检查叠加触发崩溃。保留符号以便旧调用点无需改动。
 enum AppTrace {
-    private static let lock = NSLock()
-    private static var _tag = "-"
-    static var tag: String {
-        lock.lock(); defer { lock.unlock() }; return _tag
-    }
-    static func set(_ t: String) {
-        lock.lock(); _tag = t; lock.unlock()
-    }
+    static var tag: String { "-" }
+    static func set(_ t: String) {}
 }
 
-/// 主线程卡顿看门狗。
+/// 主线程卡顿看门狗 —— 已停用。
 ///
-/// 后台每 0.4 秒往主队列投递一个空块并等待：正常情况立刻回来；
-/// 超过 1.5 秒说明主线程被堵（同步 I/O、锁等待、死循环）。
-/// 记录会写进「我的 → 站点管理 → 站点诊断日志」，可一键复制。
+/// 旧实现是一个 `while true` 的后台死循环：每 0.4s 向主队列投递 block 并用
+/// `DispatchSemaphore` 等待，超时后从后台线程调用 `SiteLog.add`。问题在于：
+///  1. `SiteLog.add` 里的共享 `DateFormatter` 非线程安全，后台与主线程并发写日志会 EXC_BAD_ACCESS；
+///  2. 主线程卡住时后台再 `sem.wait(20s)`，与播放器的主线程互相拖死；
+///  3. 这个包是 iOS 18 工程硬降到 17.0，Swift 6.2 运行时对这类跨线程信号量/锁的
+///     执行器检查更严格，是「动不动就闪退」的高发点。
+/// 纯诊断功能，无播放价值，1.8 起彻底移除。
 enum MainThreadWatchdog {
-    private static var started = false
-    private static let queue = DispatchQueue(label: "stv.main.watchdog", qos: .utility)
-
-    static func start() {
-        guard !started else { return }
-        started = true
-        queue.async {
-            while true {
-                let sent = Date()
-                let sem = DispatchSemaphore(value: 0)
-                DispatchQueue.main.async { sem.signal() }
-                if sem.wait(timeout: .now() + 4) == .timedOut {
-                    // 主线程 4 秒都没响应：先记一条，然后继续等它恢复
-                    SiteLog.add("⛔️ 主线程无响应 >4s · 当时: \(AppTrace.tag)")
-                    _ = sem.wait(timeout: .now() + 20)
-                    SiteLog.add("↩️ 主线程恢复 · 当时: \(AppTrace.tag)")
-                } else {
-                    let dt = Date().timeIntervalSince(sent)
-                    if dt > 1.5 {
-                        SiteLog.add("⚠️ 主线程卡顿 \(String(format: "%.1f", dt))s · 当时: \(AppTrace.tag)")
-                    }
-                }
-                Thread.sleep(forTimeInterval: 0.4)
-            }
-        }
-    }
+    static func start() {}
 }

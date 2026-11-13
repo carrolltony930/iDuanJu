@@ -35,7 +35,10 @@ final class NovelFonts {
         }
     }
 
-    static let all: [Entry] = [
+    /// 不可变常量数组（纯值类型），跨线程只读安全。`nonisolated(unsafe)` 让
+    /// 下面 `nonisolated static func font` 能读取它，消除 Swift 6.2 运行时的
+    /// main-actor 隔离执行器断言（构建日志把它标为 "error in Swift 6 language mode"）。
+    nonisolated(unsafe) static let all: [Entry] = [
         Entry(id: "system", name: "苹方", kind: .system, note: "系统默认"),
         Entry(id: "songti", name: "宋体", kind: .apple("STSongti-SC-Regular"), note: "系统字体 · 首次使用由系统下载"),
         Entry(id: "kaiti", name: "楷体", kind: .apple("STKaitiSC-Regular"), note: "系统字体 · 首次使用由系统下载"),

@@ -207,10 +207,29 @@ struct HomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    // 站源：固定 3 列。点一下直接切到该站源（漫画/小说/频道也在内，
+                    // 不再像旧版那样把每个站源纵向罗列成一长条）。
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("站源").font(.subheadline.weight(.semibold)).foregroundStyle(STVTheme.secondary)
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
+                            ForEach(HomeSource.all) { s in
+                                let on = s == source
+                                Button { source = s; showChannels = false } label: {
+                                    Text(s.label).font(.subheadline.weight(on ? .semibold : .regular))
+                                        .foregroundStyle(on ? STVTheme.accent : STVTheme.text)
+                                        .lineLimit(1).minimumScaleFactor(0.7)
+                                        .frame(maxWidth: .infinity).frame(height: 40)
+                                        .background(on ? STVTheme.accent.opacity(0.14) : STVTheme.glass,
+                                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                }.buttonStyle(.plain).accessibilityIdentifier("panel.source.\(s.label)")
+                            }
+                        }
+                    }
+                    // 频道：当前站源下的子频道同样固定 3 列，和「红果」那一排保持一致；
+                    // 长标签缩放而不是撑成整行。
                     ForEach(HomeSource.all.filter { !$0.subs.isEmpty }) { s in
                         VStack(alignment: .leading, spacing: 10) {
                             Text(s.label).font(.subheadline.weight(.semibold)).foregroundStyle(STVTheme.secondary)
-                            // 固定 3 列：和「红果」那一排保持一致；长标签缩放而不是撑成整行
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                                 ForEach(s.subs, id: \.self) { t in
                                     let on = s == source && (subs[s] ?? s.subs[0]) == t

@@ -293,9 +293,10 @@ struct NovelReaderView: View {
                     ForEach(book.chapters.indices, id: \.self) { i in
                         NovelTextView(text: scrollText(i))
                             .id(i)
-                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("novel.scroll")) } action: { f in
-                            trackScroll(i, f)
-                        }
+                            // onGeometryChange 是 iOS 18 的 SwiftUI API，iOS 17 上退化为不追踪
+                            // 滚动几何（小说照常滚动/翻章，仅顶部章节标题跟随不更新），
+                            // 与 VerticalPlayerView 的 feedScrollTracking 降级策略一致。
+                            .novelScrollGeometry { f in trackScroll(i, f) }
                     }
                 }
                 .padding(.horizontal, hMargin).padding(.top, 36).padding(.bottom, 80)
@@ -922,6 +923,20 @@ struct PillSlider: View {
         .accessibilityValue(label ?? "\(Int(value * 100))%")
         .accessibilityAdjustableAction { dir in
             value = (value + (dir == .increment ? 0.05 : -0.05)).clamped
+        }
+    }
+}
+
+/// iOS 17 兼容层：几何回调 `onGeometryChange(for:of:action:)` 从 iOS 18 才有。
+/// 低版本退化为不追踪（页面仍可正常滚动、翻章、听书），避免旧系统上运行
+/// 未 back-deploy 的几何回调触发 SwiftUI 运行时崩溃。
+private extension View {
+    @ViewBuilder
+    func novelScrollGeometry(_ onFrame: @escaping (CGRect) -> Void) -> some View {
+        if #available(iOS 18.0, *) {
+            self.onGeometryChange(for: CGRect.self) { $0.frame(in: .named("novel.scroll")) } action: { f in onFrame(f) }
+        } else {
+            self
         }
     }
 }
