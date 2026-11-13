@@ -28,18 +28,22 @@ final class OrientationGate: NSObject, UIApplicationDelegate {
     }
     @MainActor static func lockPortrait() {
         mask = .portrait
-        // 只有当前真的是横屏才发旋转请求。竖屏状态下也调 requestGeometryUpdate 会白白开一次
-        // 旋转事务；如果此时正好在 pop 动画里，主线程会一直等它，表现为「返回后卡死」。
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           !scene.interfaceOrientation.isPortrait {
-            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) { _ in }
-        }
+        // 只改 mask + 让系统重新评估，不主动发 requestGeometryUpdate。
+        // 改 mask 后系统会自己按新掩码转正；而主动请求旋转会开一个几何事务，
+        // 如果这时正好在 push/pop 动画里，UIKit 会一直等它，表现为「返回卡死」或
+        // 「点了视频只出现导航栏、内容不切」。这是 2.4/2.5 两次「卡死」的共同来源。
         refresh()
     }
     @MainActor private static func refresh() {
         for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
             for win in scene.windows {
-                win.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+                // 找到最上层 VC：播放器现在是 fullScreenCover 呈现的，只通知 root 有时不生效。
+                var vc = win.rootViewController
+                while let p = vc?.presentedViewController { vc = p }
+                // 转场进行中改方向会打断 UIKit 的转场，留下吃触摸的残留层 —— 跳过这一次，
+                // 调用方本来就已经把 unlock/lockPortrait 延后到转场之后了。
+                if vc?.transitionCoordinator?.isAnimated == true { continue }
+                vc?.setNeedsUpdateOfSupportedInterfaceOrientations()
             }
         }
     }

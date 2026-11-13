@@ -288,7 +288,7 @@ struct TGSearchView: View {
                 ForEach(results) { p in
                     TGPostCard(post: p, channel: store.channel(p.channel), actions: TGActions(
                         openImages: { p, i in viewer = .init(urls: p.media.filter { $0.kind == .photo }.map(\.thumb), index: 0) },
-                        playVideo: { p, i in if let s = TGVideoProvider.series(p, media: i, channel: store.channel(p.channel)) { Router.push(.play(s, 0)) } },
+                        playVideo: { p, i in if let s = TGVideoProvider.series(p, media: i, channel: store.channel(p.channel)) { PlayerPresenter.shared.present(s, at: 0) } },
                         download: { p, i in TGDownloads.shared.enqueue(post: p, media: i, channel: store.channel(p.channel)) }))
                     Divider().overlay(STVTheme.text.opacity(0.06))
                 }
@@ -404,7 +404,7 @@ struct DownloadsView: View {
     }
 
     private func open(_ d: TGDownload) {
-        if d.kind == .video { Router.push(.play(TGVideoProvider.series(download: d), 0)) }
+        if d.kind == .video { PlayerPresenter.shared.present(TGVideoProvider.series(download: d), at: 0) }
         else if let u = d.localURL { viewer = .init(urls: [u.absoluteString], index: 0) }
     }
 }
@@ -523,8 +523,8 @@ struct TDChatView: View {
                         openImages: { p, _ in viewer = .init(urls: p.media.filter { $0.kind == .photo }.map(\.thumb), index: 0) },
                         playVideo: { p, i in
                             guard let v = p.media[i].video else { return }
-                            Router.push(.play(HGSeries(source: .telegram, seriesId: "td/\(p.channel)/\(p.msgId)/\(i)", title: title, cover: p.media[i].thumb,
-                                                       duration: p.media[i].duration, orientation: "landscape", page: v), 0))
+                            PlayerPresenter.shared.present(HGSeries(source: .telegram, seriesId: "td/\(p.channel)/\(p.msgId)/\(i)", title: title, cover: p.media[i].thumb,
+                                                                     duration: p.media[i].duration, orientation: "landscape", page: v), at: 0)
                         }))
                     Divider().overlay(STVTheme.text.opacity(0.06))
                 }

@@ -4,6 +4,9 @@ import SwiftUI
 /// 胶囊只在根页面显示；进入详情 / 播放器等二级页面时隐藏。
 struct RootTabView: View {
     @State private var tab = Int(ProcessInfo.processInfo.environment["STV_TAB"] ?? "") ?? 0
+    /// 播放器走 fullScreenCover，不走 NavigationStack push。原因见 PlayerPresenter 注释：
+    /// push 转场会被方向刷新 / 边缘返回手势打断，停在半路就会「下半屏黑、触摸全死、图还在动」。
+    @ObservedObject private var player = PlayerPresenter.shared
     @State private var paths = [NavigationPath(), NavigationPath(), NavigationPath(), NavigationPath()]
     static let items: [(String, String)] = [("首页", "play.house.fill"), ("搜索", "magnifyingglass"),
                                             ("找剧", "square.grid.2x2.fill"), ("我的", "person.crop.circle.fill")]
@@ -31,7 +34,12 @@ struct RootTabView: View {
             .allowsHitTesting(paths[tab].isEmpty)
         }
         .onAppear {
-            Router.handler = { r in paths[tab].append(r) }
+            Router.handler = { r in
+                // 任何地方想 push 播放器，都改成全屏 modal —— push 转场在 iOS 17 上会被
+                // 方向刷新和边缘返回手势打断，停在半路就是「下半屏黑、触摸全死」。
+                if case .play(let s, let i) = r { PlayerPresenter.shared.present(s, at: i); return }
+                paths[tab].append(r)
+            }
             // 回到根页面后纠正一次导航栏：转场被打断时 UIKit 会把 Back 留在首页左上角。
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
             #if DEBUG
@@ -45,6 +53,18 @@ struct RootTabView: View {
         }
         .onChange(of: tab) { _, _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
+        }
+        // 播放器：全屏 modal。关闭后顺手纠正一次导航栏（历史版本 push 残留的 Back）。
+        .fullScreenCover(item: $player.route) { r in
+            VerticalPlayerView(series: r.series, startIndex: r.startIndex)
+        }
+        .onChange(of: player.route) { _, v in
+            guard v == nil else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
+            // 关闭动画彻底结束后再放开可能残留的转场容器，否则整屏触摸会一直没人接收。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                MainActor.assumeIsolated { NavBarHealer.releaseStuckTransitionLayers() }
+            }
         }
         // Cold start: restore a saved TDLib login (no network login, nothing is sent).
         .task { await TDLibService.shared.bootstrap() }

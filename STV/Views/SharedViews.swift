@@ -105,7 +105,9 @@ extension View {
             switch r {
             case .series(let s): DramaDetailView(series: s)
             case .board(let b): BoardListView(board: b)
-            case .play(let s, let i): VerticalPlayerView(series: s, startIndex: i)
+            // 兜底分支：正常路径已全部改走 PlayerPresenter.fullScreenCover（见 PlayerPresenter
+            // 注释）。万一还有代码 push 到这里，宁可什么都不做，也不要再进导航栈。
+            case .play: EmptyView()
             case .actor(let a): ActorView(actor: a)
             case .search: SearchView(pushed: true)
             case .searchFor(let q): SearchView(pushed: true, initialQuery: q)
@@ -141,6 +143,11 @@ extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
     }
 
     public func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        // 转场动画进行中，绝不允许开启交互式返回。
+        // UIKit 会把进行中的 push/pop 切成 interactive，之后没有任何人再给它 update / end，
+        // 转场就停在半路：导航栏已经换了、内容只推进一半、转场容器留在窗口上吃掉全部触摸，
+        // 而底层 SwiftUI 动画还在跑 —— 用户看到的就是「黑一块、点哪都没反应、图还在动」。
+        if let tc = transitionCoordinator, tc.isAnimated { return false }
         guard viewControllers.count > 1 else { return false }
         guard g == interactivePopGestureRecognizer,
               let pan = g as? UIPanGestureRecognizer else {

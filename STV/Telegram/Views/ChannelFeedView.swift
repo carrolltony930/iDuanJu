@@ -80,7 +80,7 @@ struct ChannelFeedView: View {
                     if let u = URL(string: p.media[i].link.isEmpty ? p.permalink : p.media[i].link) { openURL(u) }
                     return
                 }
-                Router.push(.play(s, 0))
+                PlayerPresenter.shared.present(s, at: 0)
             },
             download: { p, i in
                 if TGDownloads.shared.enqueue(post: p, media: i, channel: store.channel(p.channel)) != nil { toast = "已加入下载队列" }

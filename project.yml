@@ -49,8 +49,14 @@ targets:
       #    直连 HLS 关掉「缓冲堆满才开画面」。
       # 3) 设置 → 站源管理：内置源（含红果）与站点源可拖动排序、左滑删除、单个恢复/全部恢复。
       # 4) 频道面板去掉「子频道」一排（首页各源自己的分类条保留）。
-      MARKETING_VERSION: "2.6"
-      CURRENT_PROJECT_VERSION: "23"
+      # 2.7(24)：彻底修「点视频后下半屏黑、触摸全死、图还在动」。
+      #   根因：播放器靠 NavigationStack push 呈现，转场会被方向掩码刷新 / 边缘返回手势 /
+      #   播放器自己的 7 个 UIKit 手势打断；UIKit 把进行中的转场切成 interactive 后无人收尾，
+      #   UITransitionView 停在半路盖住全屏吃掉触摸，而底层 SwiftUI 动画仍在跑。
+      #   改法：播放器全部改为 fullScreenCover（PlayerPresenter），导航栈里不再出现播放器；
+      #   另加 transitionCoordinator 守卫 + close 后释放残留转场层。版本 2.7(24)。
+      MARKETING_VERSION: "2.7"
+      CURRENT_PROJECT_VERSION: "24"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h

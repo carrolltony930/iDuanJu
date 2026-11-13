@@ -117,11 +117,13 @@ struct DramaDetailView: View {
         let range = ranges.isEmpty ? EpisodeRange(0, -1) : ranges[g]
 
         HStack(spacing: 12) {
-            NavigationLink(value: Route.play(series, resume?.episodeIndex)) {
+            Button {
+                PlayerPresenter.shared.present(series, at: resume?.episodeIndex)
+            } label: {
                 Label(resume.map { series.source.isLongVideo ? "继续 " + Fmt.clock(Int($0.seconds)) : "继续第\($0.episodeNumber)集" } ?? "开始播放", systemImage: "play.fill")
                     .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
                     .background(STVTheme.text, in: Capsule()).foregroundStyle(STVTheme.bg)
-            }.disabled(d.episodes.isEmpty)
+            }.buttonStyle(.plain).disabled(d.episodes.isEmpty)
             Button { withAnimation(.spring) { library.toggleFavorite(series) } } label: {
                 Image(systemName: library.isFavorite(series) ? "heart.fill" : "heart")
                     .font(.title3).frame(width: 50, height: 50)
@@ -188,7 +190,9 @@ struct DramaDetailView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 8) {
                 ForEach(range.start...range.end, id: \.self) { i in
                     let ep = d.episodes[i]
-                    NavigationLink(value: Route.play(series, i)) {
+                    Button {
+                        PlayerPresenter.shared.present(series, at: i)
+                    } label: {
                         Text("\(ep.ep)")
                             .font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity, minHeight: 42)
@@ -226,7 +230,10 @@ struct DramaDetailView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
                 ForEach(sources) { s in
                     let on = s.id == current
-                    NavigationLink(value: Route.play(series, 0)) {
+                    Button {
+                        SitePrefs.preferredStream[series.id] = s.id
+                        PlayerPresenter.shared.present(series, at: 0)
+                    } label: {
                         VStack(spacing: 3) {
                             Text(s.quality ?? "默认").font(.subheadline.weight(.semibold)).lineLimit(1)
                             Text(s.kind == .hls || s.kind == .hlsAES ? "HLS" : "MP4").font(.caption2)
@@ -237,7 +244,6 @@ struct DramaDetailView: View {
                         .foregroundStyle(on ? STVTheme.accent : STVTheme.text)
                     }
                     .buttonStyle(.plain)
-                    .simultaneousGesture(TapGesture().onEnded { SitePrefs.preferredStream[series.id] = s.id })
                 }
             }
             .padding(.horizontal, 20)

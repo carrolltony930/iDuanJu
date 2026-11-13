@@ -425,10 +425,15 @@ struct PlayerScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// 返回的唯一出口：连点只放行一次（重复 dismiss 会让导航栈错位），1.2 秒后自动解锁。
+    /// 返回的唯一出口：连点只放行一次，1.2 秒后自动解锁。
+    ///
+    /// 播放器是 fullScreenCover 呈现的，`dismiss()` 只关掉呈现；还要把
+    /// `PlayerPresenter.route` 置空，否则下次点播放时 item 的 id 没变，SwiftUI 认为
+    /// 「已经是这个页面」，什么都不会发生。置空放在关闭动画之后，避免和系统收尾抢同一帧。
     private func close() {
         guard !closing else { return }
         closing = true
+        PlayerPresenter.shared.clear(after: 0.45)
         dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { closing = false }
     }
