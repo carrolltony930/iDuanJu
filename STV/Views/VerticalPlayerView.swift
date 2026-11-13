@@ -18,11 +18,15 @@ private enum SpeedHaptics {
 struct VerticalPlayerView: View {
     let series: HGSeries
     let startIndex: Int?
+    /// 由外层叠层呈现时传入。为空时退回 `@Environment(\.dismiss)`（仅供预览 / 老调用点）。
+    var onClose: (() -> Void)? = nil
     @State private var switched: HGSeries?
 
     var body: some View {
         let s = switched ?? series
-        PlayerScreen(series: s, startIndex: switched == nil ? startIndex : nil) { next in switched = next }
+        PlayerScreen(series: s, startIndex: switched == nil ? startIndex : nil,
+                     onSwitchSeries: { next in switched = next },
+                     onClose: onClose)
             .id(s.id)
     }
 }
@@ -31,6 +35,8 @@ struct PlayerScreen: View {
     let series: HGSeries
     let startIndex: Int?
     var onSwitchSeries: (HGSeries) -> Void = { _ in }
+    /// 叠层呈现时的关闭回调；为空则走 @Environment(\.dismiss)。
+    var onClose: (() -> Void)? = nil
     @State private var co: PlaybackCoordinator
     @State private var seasons: [HGSeries] = []
     private let danmaku = DanmakuSettings.shared
@@ -70,8 +76,11 @@ struct PlayerScreen: View {
 
     private var landscape: Bool { vClass == .compact }
 
-    init(series: HGSeries, startIndex: Int?, onSwitchSeries: @escaping (HGSeries) -> Void = { _ in }) {
+    init(series: HGSeries, startIndex: Int?,
+         onSwitchSeries: @escaping (HGSeries) -> Void = { _ in },
+         onClose: (() -> Void)? = nil) {
         self.series = series; self.startIndex = startIndex; self.onSwitchSeries = onSwitchSeries
+        self.onClose = onClose
         _co = State(initialValue: PlaybackCoordinator(series: series))
     }
 
@@ -284,6 +293,9 @@ struct PlayerScreen: View {
             // 旋转请求必须再往后放：requestGeometryUpdate 在 pop 动画期间调用会一直等旋转事务，
             // 主线程被占住，表现就是「左上角返回后整个界面卡死」。竖屏状态下也无需重复请求。
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                // 快速「返回 → 再点进去」时，新的播放器可能已经打开。这时若还去锁竖屏，
+                // 会和它的 unlock 打架，表现为「点进去了但整个播放器横不过来 / 黑一下」。
+                guard PlayerPresenter.shared.route == nil else { return }
                 OrientationGate.lockPortrait()
             }
         }
@@ -427,14 +439,15 @@ struct PlayerScreen: View {
 
     /// 返回的唯一出口：连点只放行一次，1.2 秒后自动解锁。
     ///
-    /// 播放器是 fullScreenCover 呈现的，`dismiss()` 只关掉呈现；还要把
-    /// `PlayerPresenter.route` 置空，否则下次点播放时 item 的 id 没变，SwiftUI 认为
-    /// 「已经是这个页面」，什么都不会发生。置空放在关闭动画之后，避免和系统收尾抢同一帧。
+    /// 叠层呈现时走 `onClose`（外层把 route 置空，视图直接移除）；没有回调时才退回
+    /// `dismiss()`。两种情况都要把 `PlayerPresenter.route` 清掉，否则下次点播放时
+    /// id 没变，SwiftUI 会认为「已经是这个页面」而不重建。
     private func close() {
         guard !closing else { return }
         closing = true
+        // 叠层呈现：由外层把 route 置空，视图直接移除，不经过任何 UIKit 转场控制器。
+        if let onClose { onClose() } else { dismiss() }
         PlayerPresenter.shared.clear(after: 0.45)
-        dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { closing = false }
     }
 

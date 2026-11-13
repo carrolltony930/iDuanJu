@@ -4,8 +4,8 @@ import SwiftUI
 /// 胶囊只在根页面显示；进入详情 / 播放器等二级页面时隐藏。
 struct RootTabView: View {
     @State private var tab = Int(ProcessInfo.processInfo.environment["STV_TAB"] ?? "") ?? 0
-    /// 播放器走 fullScreenCover，不走 NavigationStack push。原因见 PlayerPresenter 注释：
-    /// push 转场会被方向刷新 / 边缘返回手势打断，停在半路就会「下半屏黑、触摸全死、图还在动」。
+    /// 播放器以 SwiftUI 叠层呈现，既不走 NavigationStack push，也不走 fullScreenCover。
+    /// 两种 UIKit 转场在 iOS 17 上反复开关后都可能留下透明容器吃掉触摸。详见 PlayerPresenter 注释。
     @ObservedObject private var player = PlayerPresenter.shared
     @State private var paths = [NavigationPath(), NavigationPath(), NavigationPath(), NavigationPath()]
     static let items: [(String, String)] = [("首页", "play.house.fill"), ("搜索", "magnifyingglass"),
@@ -35,8 +35,8 @@ struct RootTabView: View {
         }
         .onAppear {
             Router.handler = { r in
-                // 任何地方想 push 播放器，都改成全屏 modal —— push 转场在 iOS 17 上会被
-                // 方向刷新和边缘返回手势打断，停在半路就是「下半屏黑、触摸全死」。
+                // 任何地方想 push 播放器，都改成叠层呈现。push 转场在 iOS 17 上会被方向刷新
+                // 和边缘返回手势打断，停在半路就是「半屏黑、触摸全死」。
                 if case .play(let s, let i) = r { PlayerPresenter.shared.present(s, at: i); return }
                 paths[tab].append(r)
             }
@@ -54,15 +54,29 @@ struct RootTabView: View {
         .onChange(of: tab) { _, _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
         }
-        // 播放器：全屏 modal。关闭后顺手纠正一次导航栏（历史版本 push 残留的 Back）。
-        .fullScreenCover(item: $player.route) { r in
-            VerticalPlayerView(series: r.series, startIndex: r.startIndex)
+        // 播放器：直接叠在 TabView 上面的普通 SwiftUI 视图。
+        //
+        // 不用 push、也不用 fullScreenCover —— 这两条路都会经过 UIKit 的转场控制器
+        // （UINavigationTransitionView / UIPresentationController），在 iOS 17 上被反复
+        // 开关五六次后可能留下一个**透明**的容器盖在窗口上：底层首页看着完全正常、
+        // 轮播还在动，但所有触摸都被它吃掉，和「卡死」一模一样。
+        //
+        // 叠层只有视图的插入与移除，没有转场控制器可残留，也就没有可被打断的动画。
+        // 关闭是瞬时的（不加 transition），宁可少一个淡出效果，也不要多一层能卡住的东西。
+        .overlay {
+            if let r = player.route {
+                VerticalPlayerView(series: r.series, startIndex: r.startIndex,
+                                   onClose: { player.route = nil })
+                    // 每次呈现都用新的 id：连点「返回 → 再进」时，中间那次 nil 可能被
+                    // SwiftUI 合并掉，id 不变就不会重建，表现成「点了没反应」。
+                    .id(r.id)
+                    .zIndex(1)
+            }
         }
+        // 关闭播放器后顺手清一次可能残留的转场容器（历史版本留下的，升级后重启即清）。
         .onChange(of: player.route) { _, v in
             guard v == nil else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
-            // 关闭动画彻底结束后再放开可能残留的转场容器，否则整屏触摸会一直没人接收。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 MainActor.assumeIsolated { NavBarHealer.releaseStuckTransitionLayers() }
             }
         }

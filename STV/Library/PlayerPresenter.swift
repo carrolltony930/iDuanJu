@@ -21,8 +21,13 @@ import SwiftUI
 ///
 /// 这正好解释了「看着像卡死、其实图还在动、点哪都没反应」。
 ///
-/// 改成 fullScreenCover 之后：没有导航转场可被打断，也不会残留 `< Back`，播放器的手势
-/// 不再和导航控制器抢识别器。
+/// 先改成 fullScreenCover 后仍能复现（进出五六次触发，且**没有** `< Back`、画面干净、
+/// 轮播还在动）—— 说明残留的不是导航转场，而是 modal 的 presentation 容器：一个透明、
+/// 全屏、吃触摸的 view 盖在窗口上。
+///
+/// 所以最终方案是「SwiftUI 叠层」：播放器作为 RootTabView 的 overlay 插入 / 移除，
+/// 完全不创建 UINavigationTransitionView 或 UIPresentationController，没有任何转场
+/// 控制器可残留，也没有可被打断的动画。
 struct PlayerRoute: Identifiable, Hashable {
     let id = UUID()
     let series: HGSeries

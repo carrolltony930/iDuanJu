@@ -55,8 +55,12 @@ targets:
       #   UITransitionView 停在半路盖住全屏吃掉触摸，而底层 SwiftUI 动画仍在跑。
       #   改法：播放器全部改为 fullScreenCover（PlayerPresenter），导航栈里不再出现播放器；
       #   另加 transitionCoordinator 守卫 + close 后释放残留转场层。版本 2.7(24)。
-      MARKETING_VERSION: "2.7"
-      CURRENT_PROJECT_VERSION: "24"
+      # 2.8(25)：播放器改为 SwiftUI 叠层（overlay），彻底不创建 UIKit 转场控制器。
+      #   2.7 换成 fullScreenCover 后仍能在「进出五六次」后复现，且这次没有 < Back、
+      #   画面干净、轮播还在动 —— 残留的是 modal 的 presentation 容器（透明、全屏、吃触摸）。
+      #   叠层只有视图插入/移除，没有可残留的容器，也没有可被打断的动画。
+      MARKETING_VERSION: "2.8"
+      CURRENT_PROJECT_VERSION: "25"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h
