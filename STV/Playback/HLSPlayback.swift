@@ -130,14 +130,11 @@ final class HLSPlayback: NSObject, AVAssetResourceLoaderDelegate {
     }
 
     /// The single exit that touches AVFoundation's finishLoading. No other call site exists.
-    /// `finishLoading` / `finishLoadingWithError:` 会抛 Objective-C 异常，Swift 捕获不到，
-    /// 因此即便被上面的 guarded 块调用，这里仍单独再包一层，确保任何调用路径都不会
-    /// 让异常逃逸出 dispatch block（否则 std::terminate -> SIGABRT，整个 App 被杀）。
+    /// 真正的 finishLoading 调用下沉到 Objective-C 帧（STVAVLoadingGuard.finish），
+    /// 在纯 ObjC 栈内 @try/@catch 兜住 NSInternalInconsistencyException —— Swift 无法
+    /// 捕获 ObjC 异常，一旦逃逸出 dispatch block 就是 std::terminate -> SIGABRT。
     private func finish(_ req: AVAssetResourceLoadingRequest, with error: Error?) {
-        STVAVLoadingGuard.guarded {
-            guard !req.isCancelled, !req.isFinished else { return }
-            if let error { req.finishLoading(with: error) } else { req.finishLoading() }
-        }
+        STVAVLoadingGuard.finish(req, error: error.map { $0 as NSError })
     }
 
     /// Absolutize URIs; nested playlists go back through the loader, keys go to the local key scheme.

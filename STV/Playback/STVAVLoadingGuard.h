@@ -14,6 +14,14 @@
 ///   lastExceptionBacktrace: objc_exception_throw ->
 ///   -[AVAssetResourceLoadingRequest finishLoadingWithError:] ->
 ///   HLSPlayback.finishKey(_:id:)  on queue stv.hls.loader
+@class AVAssetResourceLoadingRequest;
+
 @interface STVAVLoadingGuard : NSObject
+/// Run a block under @try/@catch. Used for request setup (respond / contentInformation).
 + (void)guarded:(void (^ _Nonnull)(void))block;
+/// The ONLY place that calls -finishLoading / -finishLoadingWithError:. Keeping the
+/// call inside an Objective-C frame means the NSInternalInconsistencyException is
+/// thrown AND caught without ever unwinding through a Swift frame (which has no
+/// ARC-safe ObjC-exception unwinding). This is the SIGABRT-proof exit.
++ (void)finish:(AVAssetResourceLoadingRequest * _Nonnull)request error:(NSError * _Nullable)error;
 @end

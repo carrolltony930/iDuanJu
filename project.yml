@@ -37,7 +37,7 @@ targets:
       CURRENT_PROJECT_VERSION: "16"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
-      SWIFT_OBJC_BRIDGING_HEADER: STV/Playback/STV-Bridging-Header.h
+      SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h
       SWIFT_EMIT_LOC_STRINGS: YES
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
