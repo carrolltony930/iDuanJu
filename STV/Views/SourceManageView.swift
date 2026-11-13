@@ -10,8 +10,6 @@ struct SourceManageView: View {
     @State private var removed: [HomeSource] = []
     @State private var editMode: EditMode = .inactive
 
-    private var visibleNow: [HomeSource] { SourceOrder.shared.arrange(HomeSource.all) }
-
     var body: some View {
         List {
             Section {

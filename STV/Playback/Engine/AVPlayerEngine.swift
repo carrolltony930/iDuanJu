@@ -49,7 +49,8 @@ import UIKit
         // 直连 HLS（黄果视频站、长视频站）不要等 AVFoundation 把缓冲堆满才开画面：
         // 默认策略会先囤几秒再播，代理环境下就是「转圈 20 秒」。预缓冲/本地代理路径不受影响。
         if case .stream = src {
-            item.automaticallyWaitsToMinimizeStalling = false
+            // AVPlayerItem 没有 stalling 开关（那是 AVPlayer 的属性），只设向前缓冲：
+            // 默认行为会先囤好几秒才出画面，代理环境下就是「转圈」。
             item.preferredForwardBufferDuration = 2
         }
         audioGroup = nil; legibleGroup = nil; audioTracks = []; subtitleTracks = []; selectedAudio = nil; selectedSubtitle = nil
