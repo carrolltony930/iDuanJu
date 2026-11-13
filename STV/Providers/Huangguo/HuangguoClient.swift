@@ -23,12 +23,19 @@ actor HuangguoClient {
     static let shared = HuangguoClient()
 
     static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6 Mobile/15E148 Safari/604.1"
-    /// AI site mirrors (2026-11: old *.ediayikma.cc now 301 → *.adihsppe.cc; huangguoai.com is unreachable from
-    /// mainland networks). More are discovered from the site's /go-home/ page and persisted.
-    static let aiMirrors = ["https://00b4b.adihsppe.cc", "https://bsl8m.adihsppe.cc", "https://hgai12.com",
-                            "https://brma.adihsppe.cc", "https://mzofzp.adihsppe.cc", "https://rpb7bz.adihsppe.cc", "https://v2tg.adihsppe.cc",
-                            "https://huangguoai.com", "https://huangguoai.io", "https://huangguoai.me", "https://huangguoai.ai",
+    /// 黄果线路是「随机子域 + 固定主域」：换线路时子域整批被摘解析（DNS 直接不响应），
+    /// 主域长期不变。2026-11-13 实测 *.adihsppe.cc / *.ediayikma.cc / huangguoai.com 全部失联，
+    /// 当前真线路是入口页 data-url 公布的 *.dmsbazvt.cc（也见过 ephxeyaj / gitiecgad）。
+    /// 内置列表只放稳定的主域入口当种子，随机子域一律靠入口页动态发现，写死会随换线路失效。
+    static let aiMirrors = ["https://huangguoai.io", "https://huangguoai.me", "https://huangguoai.ai",
+                            "https://huangguoai.com", "https://hgai14.com", "https://hgai12.com",
+                            "https://00b4b.adihsppe.cc", "https://bsl8m.adihsppe.cc", "https://brma.adihsppe.cc",
+                            "https://mzofzp.adihsppe.cc", "https://rpb7bz.adihsppe.cc", "https://v2tg.adihsppe.cc",
                             "https://thu.agdkczeyx.cc", "https://ttvoij.ediayikma.cc"]
+    /// 固定入口页：站方持续在这里用 data-url 公布当前线路。整组线路失效时抓一次即可自愈，
+    /// 不需要跟着发版。对齐全剧 provider_huangguo_domain.go 的 huangguoEntryPages。
+    static let aiEntryPages = ["https://hgai14.com", "https://hgai12.com",
+                               "https://huangguoai.pages.dev", "https://huangguoai.ai"]
     static let mirrorsKey = "stv.huangguo.aiMirrors"
     static let baseKey = "stv.huangguo.aiBase"
     static let videoBase = "https://huangguo.video"
@@ -90,48 +97,106 @@ actor HuangguoClient {
         return out
     }
 
-    /// Mirror origins listed on a /go-home/ (发布页) page: same-site hosts only (huangguoai.* / *.adihsppe.cc / hgai*.com).
+    /// 从入口页/发布页 HTML 里抽线路：既认老的 data-url="https://xxx.dmsbazvt.cc"，
+    /// 也认正文里裸出现的线路域名。主域白名单覆盖历次换线路用过的固定主域。
+    /// 注意：入口页本身（hgai12.com / hgai14.com）是「发布页」，首页 200 但 API 全 404，
+    /// 绝不能当线路用，所以这里只收随机子域线路，不收入口页 host。
     static func discoveredMirrors(_ html: String) -> [String] {
         var out: [String] = []
-        for m in HTML.all("https://((?:[a-z0-9-]+\\.)?(?:adihsppe\\.cc|huangguoai\\.(?:com|io|me|ai)|hgai\\d*\\.com))(?=[/\"'\\s<])", html) {
-            let o = "https://" + m[1]
+        func add(_ raw: String) {
+            // 统一规范化成 https://host，避免 data-url 带路径/尾斜杠把后续 URL 拼坏。
+            guard let comp = URLComponents(string: raw), let h = comp.host, !h.isEmpty,
+                  Self.isLineHost(raw) else { return }
+            let o = "https://" + h.lowercased()
             if !out.contains(o) { out.append(o) }
+        }
+        // 优先 data-url（站方公布当前线路的地方）
+        for m in HTML.all("data-url\\s*=\\s*[\"'](https?://[^\"'\\s>]+)", html) { add(m[1]) }
+        // 兜底：正文里出现的线路域名
+        for m in HTML.all("https://([a-z0-9-]+\\.(?:dmsbazvt|ephxeyaj|gitiecgad|adihsppe|ediayikma|agdkczeyx)\\.cc)(?=[/\"'\\s<])", html) {
+            add("https://" + m[1])
         }
         return out
     }
 
-    /// One mirror probe: GET / (redirects followed) and keep the FINAL origin so later POSTs don't hit a 301.
-    private func probe(_ m: String) async -> (String, String)? {
-        guard let u = URL(string: m + "/") else { return nil }
-        var r = URLRequest(url: u, timeoutInterval: 8)
-        r.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-        guard let (d, resp) = try? await session.data(for: r), let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-        let body = String(decoding: d, as: UTF8.self)
-        guard body.contains("hg-drama-card") || body.contains("videoInitialData") || body.contains("/ai-duanju/") else { return nil }
-        let f = http.url ?? u
-        return ("\(f.scheme ?? "https")://\(f.host ?? u.host ?? "")", body)
+    /// 只接受「随机子域 + 固定线路主域」的 host，排除入口页、CDN、封面图等。
+    static func isLineHost(_ u: String) -> Bool {
+        guard let h = URL(string: u)?.host?.lowercased() else { return false }
+        let mains = ["dmsbazvt.cc", "ephxeyaj.cc", "gitiecgad.cc", "adihsppe.cc", "ediayikma.cc", "agdkczeyx.cc"]
+        return mains.contains { h.hasSuffix("." + $0) }
     }
 
-    /// Races all mirrors (first valid wins), remembers the winner and learns new mirrors from /go-home/.
-    private func ensureAIBase() async throws -> String {
-        if let b = aiBase { return b }
-        let cands = Self.mirrorCandidates()
-        let won: (String, String)? = await withTaskGroup(of: (String, String)?.self) { g in
+    /// 一条线路是否真的能当 API 用：打一次最小搜索接口，确认返回 data.engine（或 items）非空。
+    /// 只看首页会被「发布页」骗——旧域名/入口页常常还能返回落地页，但 /api/search 与
+    /// /api/videos/.../playback 已经 404，选它当 base 就是「列表能看、点播放失败」。
+    private func probe(_ m: String) async -> (String, String)? {
+        guard let u = URL(string: m + "/api/search?q=%E7%9F%AD%E5%89%A7&page=1&size=1") else { return nil }
+        var r = URLRequest(url: u, timeoutInterval: 8)
+        r.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        r.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (d, resp) = try? await session.data(for: r),
+              let http = resp as? HTTPURLResponse, http.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let envData = obj["data"] as? [String: Any] else { return nil }
+        let engine = (envData["engine"] as? String) ?? ""
+        let items = envData["items"] as? [Any]
+        guard !engine.isEmpty || (items?.isEmpty == false) else { return nil }
+        let f = http.url ?? u
+        return ("\(f.scheme ?? "https")://\(f.host ?? u.host ?? "")", "")
+    }
+
+    /// 抓一个入口页，返回其中 data-url 公布的线路。actor 方法，供 withTaskGroup 用 await 调用，
+    /// 避免闭包跨边界直接读隔离属性 session 触发 Swift 6 严格并发告警。
+    private func entryLines(_ page: String) async -> [String] {
+        guard let u = URL(string: page + "/") else { return [] }
+        var r = URLRequest(url: u, timeoutInterval: 8)
+        r.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        guard let (d, resp) = try? await session.data(for: r),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+        return Self.discoveredMirrors(String(decoding: d, as: UTF8.self))
+    }
+
+    /// 并发抓取固定入口页，返回站方当前公布的线路（去重、限量）。
+    private func currentLines() async -> [String] {
+        var out: [String] = []
+        await withTaskGroup(of: [String].self) { g in
+            for p in Self.aiEntryPages { g.addTask { await self.entryLines(p) } }
+            for await found in g {
+                for o in found where !out.contains(o) { out.append(o) }
+            }
+        }
+        return Array(out.prefix(12))
+    }
+
+    /// 竞速探测一组候选，第一个能用接口应答的胜出。
+    private func race(_ cands: [String]) async -> (String, String)? {
+        await withTaskGroup(of: (String, String)?.self) { g in
             for m in cands { g.addTask { await self.probe(m) } }
             for await r in g { if let r { g.cancelAll(); return r } }
             return nil
         }
-        guard let (base, _) = won else { throw ProviderError.upstream("黄果 AI 站镜像均不可用（\(cands.count) 个）") }
-        aiBase = base
-        UserDefaults.standard.set(base, forKey: Self.baseKey)
-        Task { await self.learnMirrors(base) }
-        return base
     }
 
-    private func learnMirrors(_ base: String) async {
-        guard let h = try? await text(base + "/go-home/", referer: base + "/", ttl: 3600) else { return }
-        let found = Self.discoveredMirrors(h)
-        if !found.isEmpty { UserDefaults.standard.set(Array(found.prefix(24)), forKey: Self.mirrorsKey) }
+    /// 选一个真正能用的 API base：先竞速已知候选；整组都失效时去入口页抓当前线路再竞速一轮，
+    /// 这样站方换线路后无需发版即可自愈。全程在当前 actor 上同步完成，不派发后台任务
+    /// （iOS 17 兼容包历史上被 detached 后台任务拖崩过）。
+    private func ensureAIBase() async throws -> String {
+        if let b = aiBase { return b }
+        var cands = Self.mirrorCandidates()
+        var won = await race(cands)
+        if won == nil {
+            let lines = await currentLines()
+            if !lines.isEmpty {
+                // 入口页公布的线路存起来，下次冷启动直接用，不必每次都刷入口页。
+                UserDefaults.standard.set(lines, forKey: Self.mirrorsKey)
+                cands = lines
+                won = await race(lines)
+            }
+        }
+        guard let (base, _) = won else { throw ProviderError.upstream("黄果 AI 站线路均不可用（\(cands.count) 个）") }
+        aiBase = base
+        UserDefaults.standard.set(base, forKey: Self.baseKey)
+        return base
     }
 
     // MARK: Lists
