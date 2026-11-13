@@ -67,17 +67,16 @@ targets:
       #   ③ 新增 WindowGuard：每秒一次窗口中心 hitTest + 尺寸校验，发现「看不见但吃触摸」
       #      的层、根视图被禁用、窗口尺寸错位就地纠正。即使根因判断有遗漏，用户最多卡 1 秒
       #      就自动恢复，不会再出现「必须杀进程」。
-      # 3.0(27)：2.9 的实测日志把病根钉死了，同时修掉 2.9 自带的黑屏。
-      #   ① 2.9 的 WindowGuard 把「hitTest 返回的东西」当遮罩层隐藏 —— 而它返回的正是
-      #      UIWindow 自己，窗口一隐藏就是全黑、状态栏还在。这是 2.9 的黑屏来源，必删。
-      #   ② hitTest 返回 window 自己（或 nil）说明**根视图已不在窗口位置上**：触摸落在
-      #      root view 之外。现在改为「把根视图摆回窗口大小 + 重排」这一种安全修复，
-      #      并在关闭后主动 relayout 一次，从根上避免「画面正常但点哪都没反应」。
-      #   ③ 播放器不再 unlock 方向（原先允许四向，设备稍一倾斜系统就自己发起旋转，
-      #      撞上插入/移除就卡在中间尺寸）。现在竖屏钉死，横屏只由按钮主动请求。
-      #   ④ 「呈现后立刻返回」的最小存活时间 260ms → 500ms（260ms 仍被击穿）。
-      MARKETING_VERSION: "3.0"
-      CURRENT_PROJECT_VERSION: "27"
+      # 3.1(28)：**减法版本**。2.6 起加入的那一整套「清理残留转场层」代码，遍历
+      # UIWindow.subviews 把类名含 TransitionView 的视图关交互 / 隐藏。但 iOS 的窗口
+      # 层级本来就是 UIWindow -> UITransitionView -> rootViewController.view，那个
+      # UITransitionView 是承载整个 App 界面的正常系统容器，一直存在且多数时候无动画。
+      # 于是：关交互 = 「画面正常、轮播还在动、点哪都没反应」；隐藏 = 黑屏；
+      # 3.0 每秒跑一次的定时器 = 启动后第 1 秒必黑。这一整串卡死 / 黑屏都由它造成。
+      # 本版把 WindowGuard / NavBarHealer 全部停用，删掉所有窗口手术与方向编排，
+      # 播放器回到纯 SwiftUI overlay 的插入 / 移除，不再碰任何 UIKit 窗口层级。
+      MARKETING_VERSION: "3.1"
+      CURRENT_PROJECT_VERSION: "28"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h

@@ -245,7 +245,6 @@ struct PlayerScreen: View {
             .ignoresSafeArea()
         }
         .background(Color.black.ignoresSafeArea())
-        .background(NavPopGate())
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(landscape)
@@ -255,23 +254,6 @@ struct PlayerScreen: View {
         .task {
             co.start()
             if co.current == nil { await load() }
-        }
-        // 方向：**不再解锁**，反而把竖屏钉死。
-        //
-        // 之前这里是 `unlock()`（允许四个方向），本意是让用户转手机就能横过来。代价是：
-        // 播放器在屏期间设备只要有一点倾斜，系统就会自己发起一次旋转；这次旋转如果恰好
-        // 撞上「播放器插入/移除」或「返回」，窗口就会停在中间尺寸 —— 画面看着正常，但
-        // 根视图已经不在窗口位置上了，于是点哪都没反应。用户日志里 `hitTest` 返回 window
-        // 自己，就是这一刻。
-        //
-        // 横屏现在只由「横屏」按钮主动触发（enterLandscape 会自己 requestGeometryUpdate），
-        // 不需要常驻解锁。这样播放期间不存在任何「意料之外的方向事务」。
-        //
-        // 延迟 600ms 仍然保留：`setNeedsUpdateOfSupportedInterfaceOrientations()` 会打断
-        // 正在进行的转场。挂在 `.task` 上，视图一消失就自动取消。
-        .task {
-            do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
-            OrientationGate.lockPortrait()
         }
         .task { await screenshotHooks() }
         .task(id: lastInteraction) {
@@ -289,7 +271,6 @@ struct PlayerScreen: View {
         .alert("画中画暂不可用", isPresented: Binding(get: { co.pipError != nil }, set: { if !$0 { co.pipError = nil } })) {
             Button("好") { co.pipError = nil }
         } message: { Text(co.pipError ?? "") }
-        // 这里也绝不能 unlock（会和上面的 .task 一起，在转场里第二次打断导航）。
         .onAppear { SpeedHaptics.prepare() }
         .onDisappear {
             // iOS 17：视图正在 pop 时同步改 @State/Observable 属性会触发 SwiftUI 崩溃。
@@ -297,16 +278,6 @@ struct PlayerScreen: View {
             DispatchQueue.main.async {
                 co.teardown()
                 adjuster.restoreBrightness()
-            }
-            // 旋转请求必须再往后放：requestGeometryUpdate 在 pop 动画期间调用会一直等旋转事务，
-            // 主线程被占住，表现就是「左上角返回后整个界面卡死」。竖屏状态下也无需重复请求。
-            // 1.2 秒：close() 里可能是「先转正再关闭」，转屏 completion 最长 0.7 秒，
-            // 这里必须等在那之后，否则又会插进旋转事务里。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                // 快速「返回 → 再点进去」时，新的播放器可能已经打开。这时若还去锁竖屏，
-                // 会和它的 unlock 打架，表现为「点进去了但整个播放器横不过来 / 黑一下」。
-                guard PlayerPresenter.shared.route == nil else { return }
-                OrientationGate.lockPortrait()
             }
         }
         .onChange(of: co.current) { _, _ in scrubbing = false; flashChrome() }
@@ -447,24 +418,18 @@ struct PlayerScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// 返回的唯一出口：连点只放行一次，1.2 秒后自动解锁。
+    /// 返回的唯一出口：连点只放行一次，0.5 秒后自动解锁。
     ///
-    /// 顺序有讲究 —— **先转正、再消失**：
-    /// 如果直接撤掉播放器，页面会先按横屏尺寸重排一次布局，紧接着系统再把窗口转回竖屏；
-    /// 旋转被这次重排打断，窗口就停在中间尺寸。画面看着没变（轮播还在动），但触摸坐标系
-    /// 错位，点哪都没反应 —— 正是用户「横屏看完点返回就卡死」的那条路径。
-    /// 让旋转发生在播放器仍占满屏幕、页面还没开始重排的时候，两次事务就分开了。
+    /// 播放器是普通 SwiftUI 叠层，关闭就是一次 `route = nil`。不做转场、不做旋转编排、
+    /// 不做窗口重排 —— 3.1 之前那些「补偿动作」正是黑屏和卡死的来源。
     private func close() {
         guard !closing else { return }
         closing = true
-        let finish = {
-            // 叠层呈现：外层把 route 置空，视图直接移除，不经过任何 UIKit 转场控制器。
-            if let cb = self.onClose { cb() } else { self.dismiss() }
-        }
-        // 不判断 landscape：exitToPortrait 内部会看 scene 的真实朝向，已经是竖屏就立即回调。
-        // 用 vClass 判断会有漏网 —— 旋转途中 vClass 还没更新成 .compact。
-        OrientationGate.exitToPortrait(completion: finish)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { closing = false }
+        // 只做两件事：把方向掩码改回竖屏（纯状态赋值 + 一次系统重评估，不发几何更新、
+        // 不等回调），然后把 overlay 的 route 置空。其余一律交给 SwiftUI 自己收尾。
+        OrientationGate.lockPortrait()
+        if let onClose { onClose() } else { dismiss() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { closing = false }
     }
 
     private var controlsVisible: Bool {

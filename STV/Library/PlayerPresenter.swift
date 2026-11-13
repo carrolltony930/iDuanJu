@@ -32,8 +32,6 @@ struct PlayerRoute: Identifiable, Hashable {
     let id = UUID()
     let series: HGSeries
     let startIndex: Int?
-    /// 呈现时刻。用来判断「关闭得太早」——见 `dismiss()`。
-    let shownAt = Date()
 }
 
 final class PlayerPresenter: ObservableObject {
@@ -51,25 +49,11 @@ final class PlayerPresenter: ObservableObject {
 
     /// 关闭播放器。
     ///
-    /// 用户实测的复现条件非常明确：**反复进出二十次都不触发，但「点播放之后立刻点返回」
-    /// 必触发**。也就是说真正的成因不是「返回」，而是「呈现还没落地就收到关闭」——
-    /// 两次状态变更叠在同一小段时间里。播放器现在虽然没有转场控制器，但插入／移除全屏视图
-    /// 仍会让 UIKit 做一次布局与安全区重算；紧接着又反向撤掉，就可能留下一个已经无效、
-    /// 却仍参与命中测试的层。
-    ///
-    /// 所以这里做一道时间隔离：呈现之后不足 500ms 就要求关闭时，等满 500ms 再真正移除。
-    /// 2.9 用 260ms 仍被击穿，说明插入全屏视图（含状态栏 / 系统覆盖层切换）的完整事务
-    /// 比 260ms 长。500ms 比一次系统 dismiss 动画更宽裕，正常使用（看了一会儿才退）延迟为 0。
+    /// 就是一次普通的 SwiftUI 状态变更：把 route 置空，overlay 里的视图被移除。
+    /// 不做任何延迟、不做任何窗口/方向/手势的补偿动作 —— 3.1 之前加的那些「补偿」
+    /// 恰恰是黑屏和卡死的来源（详见 WindowGuard / NavBarHealer 的停用说明）。
     func dismiss() {
-        guard let r = route else { return }
-        let elapsed = Date().timeIntervalSince(r.shownAt)
-        let wait = 0.5 - elapsed
-        guard wait > 0 else { route = nil; return }
-        STVLog.w(String(format: "[ui] dismiss delayed %.0fms (elapsed %.0fms)", wait * 1000, elapsed * 1000))
-        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
-            guard let self, self.route?.id == r.id else { return }
-            self.route = nil
-        }
+        route = nil
     }
 
     /// 关闭动画结束后再把路由清空。

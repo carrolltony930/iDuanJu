@@ -34,28 +34,16 @@ struct RootTabView: View {
             .allowsHitTesting(paths[tab].isEmpty)
         }
         .onAppear {
-            // 触摸自愈守卫：每秒做一次窗口中心 hitTest，发现「看不见但吃触摸」的层、
-            // 根视图被禁用、窗口尺寸错位，就地纠正。详见 WindowGuard。
-            WindowGuard.start()
+            // 版本锚点：装上新包后打开软件，stv.log 里会有这一行，可直接确认版本。
+            STVLog.w("[ui] STV_3_1_CLEAN_OVERLAY ready")
             Router.handler = { r in
-                // 任何地方想 push 播放器，都改成叠层呈现。push 转场在 iOS 17 上会被方向刷新
-                // 和边缘返回手势打断，停在半路就是「半屏黑、触摸全死」。
+                // 播放器一律走 SwiftUI 叠层，不经过任何 UIKit 转场控制器。
                 if case .play(let s, let i) = r { PlayerPresenter.shared.present(s, at: i); return }
                 paths[tab].append(r)
             }
-            // 回到根页面后纠正一次导航栏：转场被打断时 UIKit 会把 Back 留在首页左上角。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
             #if DEBUG
             if ProcessInfo.processInfo.environment["STV_TD_OPEN"] == "1" { Router.push(.tdlib) }
             #endif
-        }
-        // pop 回根页面、或切 tab 到根页面之后，再纠正一次。
-        .onChange(of: paths[tab].isEmpty) { _, empty in
-            guard empty else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
-        }
-        .onChange(of: tab) { _, _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { NavBarHealer.healIfRoot() } }
         }
         // 播放器：直接叠在 TabView 上面的普通 SwiftUI 视图。
         //
@@ -74,19 +62,6 @@ struct RootTabView: View {
                     // SwiftUI 合并掉，id 不变就不会重建，表现成「点了没反应」。
                     .id(r.id)
                     .zIndex(1)
-            }
-        }
-        // 关闭播放器后顺手清一次可能残留的转场容器（历史版本留下的，升级后重启即清）。
-        // 清两次：UIKit 有时候是在关闭之后的下一个动画周期才把那个空容器挂到窗口上的。
-        .onChange(of: player.route) { _, v in
-            guard v == nil else { return }
-            // 播放器撤掉后立刻让主窗口重排一次：插入/移除全屏视图会改安全区，极快的
-            // 进出可能让根视图停在一个错误的 frame 上 —— 表现为「画面正常但点哪都没反应」。
-            DispatchQueue.main.async { MainActor.assumeIsolated { WindowGuard.relayout() } }
-            for d in [0.5, 1.6] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + d) {
-                    MainActor.assumeIsolated { NavBarHealer.releaseStuckTransitionLayers() }
-                }
             }
         }
         // Cold start: restore a saved TDLib login (no network login, nothing is sent).
