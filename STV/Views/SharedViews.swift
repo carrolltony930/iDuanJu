@@ -143,6 +143,12 @@ extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
     }
 
     public func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        // 播放器是 RootTabView 上的 SwiftUI 叠层，不在导航栈里。它在屏时，左边缘右滑
+        // 由播放器自己的 edgeBackGesture 独占；绝不能让导航栈在这里发起交互式 pop ——
+        // 被 pop 的会是播放器背后的详情页，而这次交互式转场一旦被播放器手势抢走收尾，
+        // 就是历史上「转场停在半路、透明容器吃掉触摸」的入口。
+        // 纯状态判断，不碰任何视图 / 窗口 / 方向；播放器关闭后自动恢复。
+        if PlayerPresenter.shared.route != nil { return false }
         // 转场动画进行中，绝不允许开启交互式返回。
         // UIKit 会把进行中的 push/pop 切成 interactive，之后没有任何人再给它 update / end，
         // 转场就停在半路：导航栏已经换了、内容只推进一半、转场容器留在窗口上吃掉全部触摸，

@@ -34,8 +34,9 @@ struct RootTabView: View {
             .allowsHitTesting(paths[tab].isEmpty)
         }
         .onAppear {
-            // 版本锚点：装上新包后打开软件，stv.log 里会有这一行，可直接确认版本。
+            // 版本锚点：装上新包后打开软件，stv.log 里会有这两行，可直接确认版本。
             STVLog.w("[ui] STV_3_1_CLEAN_OVERLAY ready")
+            STVLog.w("[ui] STV_3_2_EDGE_BACK ready")
             Router.handler = { r in
                 // 播放器一律走 SwiftUI 叠层，不经过任何 UIKit 转场控制器。
                 if case .play(let s, let i) = r { PlayerPresenter.shared.present(s, at: i); return }

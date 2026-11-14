@@ -74,6 +74,20 @@ struct PlayerScreen: View {
     @State private var closing = false
     private let library = LibraryStore.shared
 
+    /// 竖屏左边缘右滑返回的跟手位移。
+    ///
+    /// 播放器从 2.8 起是 `RootTabView` 上的 SwiftUI 叠层，并不在导航栈里，
+    /// `UINavigationController.interactivePopGestureRecognizer` 对它没有 pop 目标；
+    /// 而 `PlayerTouchCatcher` 的 `hitTest` 又把左边缘 36pt 明确放行给「nav interactivePop」，
+    /// 于是这一带的触摸谁都不接 —— 表现就是「从左侧往右滑没反应」。
+    ///
+    /// 这里用纯 SwiftUI 手势补上：**不新建任何 UIView、不碰 window / 方向 / 转场**。
+    /// `simultaneousGesture` 保证不抢竖向翻页、长按倍速、水平快进的手势；
+    /// 只有竖屏 + 左边缘起手 + 明显横向右滑 + 滑够距离才触发，且走的还是原来那个
+    /// `close()` 出口（含防连点与方向复位）。最坏情况只是手势不生效，不会破坏
+    /// 3.1 已经修好的稳定性。
+    @GestureState private var edgeBackDrag: CGFloat = 0
+
     private var landscape: Bool { vClass == .compact }
 
     init(series: HGSeries, startIndex: Int?,
@@ -245,6 +259,12 @@ struct PlayerScreen: View {
             .ignoresSafeArea()
         }
         .background(Color.black.ignoresSafeArea())
+        // 竖屏左边缘右滑返回：纯 SwiftUI，跟手位移只改绘制、不改布局与安全区。
+        // simultaneousGesture 保证不抢竖向翻页 / 长按倍速 / 水平快进。
+        // 手势识别器挂在视图树的祖先层，左边缘触摸无论命中 CatcherView 还是穿透到
+        // 下层视图都会投递给它，不依赖 UIKit 的 hitTest 结果。
+        .offset(x: edgeBackDrag)
+        .simultaneousGesture(edgeBackGesture)
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(landscape)
@@ -416,6 +436,43 @@ struct PlayerScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// 竖屏左边缘右滑返回。
+    ///
+    /// 播放器从 2.8 起是 `RootTabView` 上的 SwiftUI 叠层，**不在导航栈里**，
+    /// `UINavigationController.interactivePopGestureRecognizer` 对它没有 pop 目标；
+    /// 而 `PlayerTouchCatcher` 的 `hitTest` 又把左边缘 36pt 明确放行（原本留给 nav pop），
+    /// 于是这一带的触摸谁都不接 —— 就是「从左侧往右滑没反应」。
+    ///
+    /// 这里用纯 SwiftUI 补上：`simultaneousGesture` 不抢竖向翻页 / 长按倍速 / 水平快进，
+    /// 只有「竖屏 + 左边缘起手 + 明显横向右滑 + 滑够距离」才走原来的 `close()` 出口。
+    /// 全程不新建 UIView、不碰 window / 方向 / 转场、不加定时器。
+    private var edgeBackGesture: some Gesture {
+        DragGesture(minimumDistance: 20, coordinateSpace: .local)
+            .updating($edgeBackDrag) { value, state, _ in
+                guard edgeBackEligible(value) else { state = 0; return }
+                state = min(max(0, value.translation.width), 260)
+            }
+            .onEnded { value in
+                guard edgeBackEligible(value) else { return }
+                let dx = value.translation.width
+                // 滑过 90pt，或快速轻扫（预测终点 > 180pt）都算返回。
+                guard dx > 90 || value.predictedEndTranslation.width > 180 else { return }
+                close()
+            }
+    }
+
+    private func edgeBackEligible(_ v: DragGesture.Value) -> Bool {
+        // 横屏有左右快进 / 亮度音量手势，不参与；面板、锁屏、倍速、拖动进度时也不参与。
+        guard !landscape, !speedMode, !locked, !scrubbing, panel == nil, !co.pipActive else { return false }
+        // 起手区严格对齐 CatcherView 让出的 36pt：那一带 UIKit 的 tap / 长按 / 快进 /
+        // 亮度手势在 gestureRecognizerShouldBegin 里一律不认领，正好由这里接住；
+        // 36pt 之外是水平快进，绝不越界去抢。
+        guard v.startLocation.x <= edgeBackWidth else { return false }
+        let w = v.translation.width, h = v.translation.height
+        guard w > 0, w > abs(h) * 1.3 else { return false }
+        return true
     }
 
     /// 返回的唯一出口：连点只放行一次，0.5 秒后自动解锁。
@@ -1278,8 +1335,15 @@ struct PlayerTouchCatcher: UIViewRepresentable {
         var edgeBackWidth: CGFloat = 36
 
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-            // Pass left-edge touches through so nav interactivePop can begin.
-            if point.x < edgeBackWidth { return nil }
+            // 播放器从 2.8 起是 RootTabView 上的 SwiftUI 叠层，不在导航栈里；
+            // 原本这里把左边缘放行给 UINavigationController.interactivePopGestureRecognizer，
+            // 但那个手势对叠层没有 pop 目标，放行只等于把触摸丢掉（甚至可能误 pop 背后的
+            // 详情页）。现在自己接住这条带，交给 PlayerScreen 上纯 SwiftUI 的 edgeBackGesture。
+            // CatcherView 自身的 tap / 长按 / 快进 / 亮度手势在 gestureRecognizerShouldBegin
+            // 里对这一带一律不认领，两边不会抢。
+            //
+            // 注意：这里只改播放器内部触摸层的命中归属，不涉及 UIWindow、rootViewController、
+            // UITransitionView、导航控制器、方向或转场 —— 与 2.6~3.0 那套窗口手术无关。
             guard self.point(inside: point, with: event) else { return nil }
             return self
         }

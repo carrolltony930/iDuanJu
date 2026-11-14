@@ -75,8 +75,17 @@ targets:
       # 3.0 每秒跑一次的定时器 = 启动后第 1 秒必黑。这一整串卡死 / 黑屏都由它造成。
       # 本版把 WindowGuard / NavBarHealer 全部停用，删掉所有窗口手术与方向编排，
       # 播放器回到纯 SwiftUI overlay 的插入 / 移除，不再碰任何 UIKit 窗口层级。
-      MARKETING_VERSION: "3.1"
-      CURRENT_PROJECT_VERSION: "28"
+      # 3.2(29)：补回竖屏播放器的左边缘右滑返回（3.1 减法版本之上）。
+      #   播放器 2.8 起是 RootTabView 上的 SwiftUI 叠层，不在导航栈里，
+      #   UINavigationController.interactivePopGestureRecognizer 对它没有 pop 目标；
+      #   CatcherView.hitTest 又把左边缘 36pt 放行给那个已不存在的手势，
+      #   于是这一带触摸无人接管 —— 表现为「从左侧往右滑没反应」。
+      #   现在：CatcherView 自己接住这条带（不放行到背后详情页，避免误 pop），
+      #   由 PlayerScreen 上纯 SwiftUI 的 simultaneousGesture 识别左边缘右滑，
+      #   跟手位移改用绘制 offset，满足阈值后走既有的 close() 单一出口。
+      #   不新建 UIView、不碰 UIWindow / 方向 / 转场 / 定时器；3.1 的减法成果全部保留。
+      MARKETING_VERSION: "3.2"
+      CURRENT_PROJECT_VERSION: "29"
       # 1.9(16)：HLSPlayback 的 finishLoading 需要 ObjC @try/@catch 包裹
       # （AVFCore 抛的是 Swift 捕获不到的 NSInternalInconsistencyException）。
       SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/STV/Playback/STV-Bridging-Header.h
